@@ -2,37 +2,37 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2086
 
-# nixos 默认的配置不会生成 /bin/bash，因此需要用 /usr/bin/env
-# alpine 默认没有 bash，因此 shebang 用 sh，再 exec 切换到 bash
+# the default nixos config does not provide /bin/bash, hence /usr/bin/env
+# alpine has no bash by default, so the shebang is sh and we exec into bash
 
 set -eE
 confhome=https://raw.githubusercontent.com/Nighthawk42/reinstall/main
 
-# 用于判断 reinstall.sh 和 trans.sh 是否兼容
+# Used to check that reinstall.sh and trans.sh are compatible
 SCRIPT_VERSION=4BACD833-A585-23BA-6CBB-9AA4E08E0004
 
-# 记录要用到的 windows 程序，运行时输出删除 \r
+# Windows programs we rely on; strip \r from their output at run time
 WINDOWS_EXES='cmd powershell wmic reg diskpart netsh bcdedit mountvol'
 
 BOOT_ENTEY_START_MARK='### BEGIN reinstall.sh ###'
 BOOT_ENTEY_END_MARK='### END reinstall.sh ###'
 
-# 临时目录
-# 不用 /tmp，因为 /tmp 挂载在内存的话，可能不够空间
+# Temporary directory
+# not /tmp: if /tmp is mounted in RAM there may not be enough space
 tmp=/reinstall-tmp
 
-# 强制 linux 程序输出英文，防止 grep 不到想要的内容
+# Force English output from linux programs so our greps match
 # https://www.gnu.org/software/gettext/manual/html_node/The-LANGUAGE-variable.html
 export LC_ALL=C
 
-# 处理部分用户用 su 切换成 root 导致环境变量没 sbin 目录
-# 也能处理 cygwin bash 没有添加 -l 运行 reinstall.sh
-# 不要漏了最后的 $PATH，否则会找不到 windows 系统程序例如 diskpart
+# Handles users who switched to root with su and so lack the sbin dirs in PATH
+# also handles cygwin bash running reinstall.sh without -l
+# do not drop the trailing $PATH, or windows programs such as diskpart are not found
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 
-# 如果不是 bash 的话，继续执行会有语法错误，因此在这里判断是否 bash
+# Continuing under a non-bash shell would be a syntax error, so check for bash here
 if [ -z "$BASH" ] ||
-    # el 的 sh 是 bash 运行在 posix 模式，依然有 $BASH 和 $BASH_VERSION
+    # the el sh is bash in posix mode, which still has $BASH and $BASH_VERSION
     { [ -n "$BASH" ] && [ -n "$POSIXLY_CORRECT" ]; }; then
     if ! command -v bash >/dev/null; then
         if [ -f /etc/alpine-release ]; then
@@ -48,8 +48,8 @@ if [ -z "$BASH" ] ||
     exec bash "$0" "$@"
 fi
 
-# 好像跟 trap SIGINT 有冲突
-# 记录日志，过滤含有 password 的行
+# seems to conflict with trap SIGINT
+# Log to a file, filtering out lines containing a password
 # exec > >(tee >(grep -iv password >>/reinstall.log)) 2>&1
 THIS_SCRIPT=$(readlink -f "$0")
 trap 'trap_err $LINENO $?' ERR
@@ -154,9 +154,6 @@ show_dd_password_tips() {
     warn false "
 This password is only used for SSH access to view logs during the installation.
 Password of the image will NOT modify.
-
-密码仅用于安装过程中通过 SSH 查看日志。
-镜像的密码不会被修改。
 "
 }
 
@@ -172,19 +169,19 @@ show_url_in_args() {
 curl() {
     is_have_cmd curl || install_pkg curl
 
-    # 显示 url
+    # show the url
     show_url_in_args "$@" >&2
 
-    # 添加 -f, --fail，不然 404 退出码也为0
-    # 32位 cygwin 已停止更新，证书可能有问题，先添加 --insecure
-    # centos 7 curl 不支持 --retry-connrefused --retry-all-errors
-    # 因此手动 retry
+    # add -f/--fail, otherwise a 404 still exits 0
+    # 32-bit cygwin is no longer updated and its certificates may be broken, so add --insecure
+    # curl on centos 7 has no --retry-connrefused or --retry-all-errors,
+    # so retry by hand
     for i in $(seq 5); do
         if command curl --insecure --connect-timeout 10 -f "$@"; then
             return
         else
             ret=$?
-            # 403 404 错误，或者达到重试次数
+            # a 403/404 error, or the retry limit was reached
             if [ $ret -eq 22 ] || [ $i -eq 5 ]; then
                 return $ret
             fi
@@ -238,9 +235,9 @@ get_os_part() {
 }
 
 umount_all() {
-    # windows defender 打开时，cygwin 运行 mount 很慢，但 cat /proc/mounts 很快
+    # with windows defender on, running mount under cygwin is slow, but cat /proc/mounts is fast
     if mount_lists=$(mount | grep -w "on $1" | awk '{print $3}' | grep .); then
-        # alpine 没有 -R
+        # alpine has no -R
         if umount --help 2>&1 | grep -wq -- '-R'; then
             umount -R "$1"
         else
@@ -262,9 +259,9 @@ is_host_has_ipv4_and_ipv6() {
     host=$1
 
     install_pkg dig
-    # dig会显示cname结果，cname结果以.结尾，grep -v '\.$' 用于去除 cname 结果
+    # dig prints cname results, which end with a dot; grep -v '\.$' removes them
     res=$(dig +short $host A $host AAAA | grep -v '\.$')
-    # 有.表示有ipv4地址，有:表示有ipv6地址
+    # a . means an ipv4 address, a : means an ipv6 address
     grep -q \. <<<$res && grep -q : <<<$res
 }
 
@@ -319,7 +316,7 @@ insert_into_file() {
         error_and_exit "File not found: $file"
     fi
 
-    # 默认 grep -E
+    # grep -E by default
     if [ $# -eq 0 ]; then
         set -- -E
     fi
@@ -362,12 +359,12 @@ test_url_real() {
 
     tmp_file=$tmp/img-test
 
-    # TODO: 好像无法识别 nixos 官方源的跳转
-    # 有的服务器不支持 range，curl会下载整个文件
-    # 所以用 head 限制 1M
-    # 过滤 curl 23 错误（head 限制了大小）
-    # 也可用 ulimit -f 但好像 cygwin 不支持
-    # ${PIPESTATUS[n]} 表示第n个管道的返回值
+    # TODO: seems unable to follow the redirect on the official nixos mirror
+    # some servers do not support range requests and curl downloads the whole file,
+    # so head caps it at 1M
+    # filter out curl error 23 (caused by the head limit)
+    # ulimit -f would also work, but cygwin seems not to support it
+    # ${PIPESTATUS[n]} is the exit status of the nth pipeline element
     echo $url
     for i in $(seq 5 -1 0); do
         if command curl --insecure --connect-timeout 10 -Lfr 0-1048575 "$url" \
@@ -380,16 +377,16 @@ test_url_real() {
             case $ret in
             22)
                 # 403 404
-                # 这里的 failed 虽然返回 1，但是不会中断脚本，因此要手动 return
+                # this failed returns 1 but does not abort the script, so return manually
                 failed "$msg"
                 return "$ret"
                 ;;
             23)
-                # 限制了空间
+                # size was capped
                 break
                 ;;
             *)
-                # 其他错误
+                # other errors
                 if [ $i -eq 0 ]; then
                     failed "$msg"
                     return "$ret"
@@ -400,16 +397,16 @@ test_url_real() {
         fi
     done
 
-    # 如果要检查文件类型
+    # when the file type needs checking
     if [ -n "$expect_types" ]; then
         install_pkg file
         real_type=$(file_enhanced $tmp_file)
         echo "File type: $real_type"
 
-        # debian 9 ubuntu 16.04-20.04 可能会将 iso 识别成 raw
+        # debian 9 and ubuntu 16.04-20.04 may detect an iso as raw
         for type in $expect_types $([ "$expect_types" = iso ] && echo raw); do
             if [[ ."$real_type" = *."$type" ]]; then
-                # 如果要设置变量
+                # when a variable needs setting
                 if [ -n "$var_to_eval" ]; then
                     IFS=. read -r "${var_to_eval?}" "${var_to_eval}_warp" <<<"$real_type"
                 fi
@@ -424,37 +421,37 @@ Actually type: $real_type"
 }
 
 fix_file_type() {
-    # gzip的mime有很多种写法
-    # centos7中显示为 x-gzip，在其他系统中显示为 gzip，可能还有其他
-    # 所以不用mime判断
+    # gzip has many possible mime spellings
+    # centos 7 reports x-gzip, other systems report gzip, and there may be more
+    # so do not rely on the mime type
     # https://www.digipres.org/formats/sources/tika/formats/#application/gzip
 
-    # centos 7 上的 file 显示 qcow2 的 mime 为 application/octet-stream
+    # file on centos 7 reports the qcow2 mime as application/octet-stream
     # file debian-12-genericcloud-amd64.qcow2
     # debian-12-genericcloud-amd64.qcow2: QEMU QCOW Image (v3), 2147483648 bytes
     # file --mime debian-12-genericcloud-amd64.qcow2
     # debian-12-genericcloud-amd64.qcow2: application/octet-stream; charset=binary
 
-    # --extension 不靠谱
+    # --extension is unreliable
     # file -b /reinstall-tmp/img-test --mime-type
     # application/x-qemu-disk
     # file -b /reinstall-tmp/img-test --extension
     # ???
 
-    # 1. 删除,;#
+    # 1. remove , ; #
     # DOS/MBR boot sector; partition 1: ...
     # gzip compressed data, was ...
-    # # ISO 9660 CD-ROM filesystem data... (有些 file 版本开头输出有井号)
+    # # ISO 9660 CD-ROM filesystem data... (some file versions prefix the output with a hash)
 
-    # 2. 删除开头的空格
+    # 2. remove leading spaces
 
-    # 3. 删除无意义的单词 POSIX, Unicode, UTF-8, ASCII
+    # 3. remove the meaningless words POSIX, Unicode, UTF-8, ASCII
     # POSIX tar archive (GNU)
     # Unicode text, UTF-8 text
     # UTF-8 Unicode text, with very long lines
     # ASCII text
 
-    # 4. 下面两种都是 raw
+    # 4. both of the following are raw
     # DOS/MBR boot sector
     # x86 boot sector; partition 1: ...
     sed -E \
@@ -469,13 +466,13 @@ fix_file_type() {
         awk '{print $1}' | to_lower
 }
 
-# 不用 file -z，因为
-# 1. file -z 只能看透一层
-# 2. alpine file -z 无法看透部分镜像（前1M），例如：
+# file -z is not used because
+# 1. file -z only sees through one layer
+# 2. alpine file -z cannot see through some images (the first 1M), e.g.:
 # guajibao-win10-ent-ltsc-2021-x64-cn-efi.vhd.gz
 # guajibao-win7-sp1-ent-x64-cn-efi.vhd.gz
 # win7-ent-sp1-x64-cn-efi.vhd.gz
-# 还要注意 centos 7 没有 -Z 只有 -z
+# also note that centos 7 has no -Z, only -z
 file_enhanced() {
     file=$1
 
@@ -491,7 +488,7 @@ file_enhanced() {
             ;;
         tar)
             install_pkg "$type"
-            # 隐藏 gzip: unexpected end of file 提醒
+            # hide the "gzip: unexpected end of file" warning
             tar xf "$file" -O 2>/dev/null | head -c 1048576 >"$file.inside"
             mv -f "$file.inside" "$file"
             ;;
@@ -504,11 +501,11 @@ file_enhanced() {
     echo "$full_type" | sed 's/\.$//'
 }
 
-# trans.sh 有相同方法
+# trans.sh has the same function
 add_community_repo_for_alpine() {
     local ver mirror
 
-    # 先检查原来的 repo 是不是 edge 或者 latest-stable
+    # first check whether the existing repo is edge or latest-stable
     if grep -q "^http.*/edge/main$" /etc/apk/repositories; then
         ver=edge
     elif grep -q "^http.*/latest-stable/main$" /etc/apk/repositories; then
@@ -529,10 +526,10 @@ is_in_container() {
         { [ -f /proc/1/environ ] && grep -q container=lxc /proc/1/environ; }
 }
 
-# 使用 | del_br ，但返回 del_br 之前返回值
+# Use | del_br but return the exit status from before del_br
 run_with_del_cr() {
     if false; then
-        # ash 不支持 PIPESTATUS[n]
+        # ash does not support PIPESTATUS[n]
         res=$("$@") && ret=0 || ret=$?
         echo "$res" | del_cr
         return $ret
@@ -552,19 +549,19 @@ run_with_del_cr_template() {
 
 wmic() {
     if is_have_cmd wmic; then
-        # 如果参数没有 GET，添加 GET，防止以下报错
+        # if the arguments have no GET, add GET to avoid this error:
         # wmic memorychip /format:list
-        # 此级别的开关异常。
+        # Invalid switch at this level.
         has_get=false
         for i in "$@"; do
-            # 如果参数有 GET
+            # if the arguments do have GET
             if [ "$(to_upper <<<"$i")" = GET ]; then
                 has_get=true
                 break
             fi
         done
 
-        # 输出为 /format:list 格式
+        # output in /format:list form
         if $has_get; then
             command wmic "$@" /format:list
         else
@@ -573,7 +570,7 @@ wmic() {
         return
     fi
 
-    # powershell wmi 默认参数
+    # default arguments for powershell wmi
     local namespace='root\cimv2'
     local class=
     local filter=
@@ -581,7 +578,7 @@ wmic() {
 
     # namespace
     if [[ "$(to_upper <<<"$1")" = /NAMESPACE* ]]; then
-        # 删除引号，删除 \\
+        # remove the quotes and the backslashes
         namespace=$(cut -d: -f2 <<<"$1" | sed -e "s/[\"']//g" -e 's/\\\\//g')
         shift
     fi
@@ -637,12 +634,12 @@ is_virt() {
                 fi
             done
 
-            # 用运行 windows ，肯定够内存运行 alpine lts netboot
-            # 何况还能停止 modloop
+            # if it can run windows it certainly has enough memory for alpine lts netboot
+            # and modloop can be stopped as well
 
-            # 没有风扇和温度信息，大概是虚拟机
-            # 阿里云 倚天710 arm 有温度传感器
-            # ovh KS-LE-3 没有风扇和温度信息？
+            # no fan or temperature information, so probably a VM
+            # Alibaba Cloud Yitian 710 arm does have a temperature sensor
+            # ovh KS-LE-3 has no fan or temperature information?
             if false && [ -z "$_is_virt" ] &&
                 ! wmic /namespace:'\\root\cimv2' PATH Win32_Fan 2>/dev/null | grep -q ^Name &&
                 ! wmic /namespace:'\\root\wmi' PATH MSAcpi_ThermalZoneTemperature 2>/dev/null | grep -q ^Name; then
@@ -650,17 +647,17 @@ is_virt() {
             fi
         else
             # aws t4g debian 11
-            # systemd-detect-virt: 为 none，即使装了dmidecode
-            # virt-what: 未装 deidecode时结果为空，装了deidecode后结果为aws
-            # 所以综合两个命令的结果来判断
+            # systemd-detect-virt: returns none, even with dmidecode installed
+            # virt-what: empty without dmidecode, returns aws once it is installed
+            # so combine the results of both commands
             if is_have_cmd systemd-detect-virt && systemd-detect-virt -v; then
                 _is_virt=true
             fi
 
             if [ -z "$_is_virt" ]; then
-                # debian 安装 virt-what 不会自动安装 dmidecode，因此结果有误
+                # installing virt-what on debian does not pull in dmidecode, so the result is wrong
                 install_pkg dmidecode virt-what
-                # virt-what 返回值始终是0，所以用是否有输出作为判断
+                # virt-what always exits 0, so judge by whether it produced output
                 if [ -n "$(virt-what)" ]; then
                     _is_virt=true
                 fi
@@ -676,16 +673,16 @@ is_virt() {
 }
 
 is_cpu_supports_x86_64_v3() {
-    # 用 ld.so/cpuid/coreinfo.exe 更准确
-    # centos 7 /usr/lib64/ld-linux-x86-64.so.2 没有 --help
-    # alpine gcompat /lib/ld-linux-x86-64.so.2 没有 --help
+    # ld.so/cpuid/coreinfo.exe would be more accurate
+    # /usr/lib64/ld-linux-x86-64.so.2 on centos 7 has no --help
+    # alpine gcompat /lib/ld-linux-x86-64.so.2 has no --help
 
     # https://en.wikipedia.org/wiki/X86-64#Microarchitecture_levels
     # https://learn.microsoft.com/sysinternals/downloads/coreinfo
 
     # abm = popcnt + lzcnt
-    # /proc/cpuinfo 不显示 lzcnt, 可用 abm 代替，但 cygwin 也不显示 abm
-    # /proc/cpuinfo 不显示 osxsave, 故用 xsave 代替
+    # /proc/cpuinfo does not list lzcnt; abm can stand in, but cygwin does not list abm either
+    # /proc/cpuinfo does not list osxsave, so xsave is used instead
 
     need_flags="avx avx2 bmi1 bmi2 f16c fma movbe xsave"
     had_flags=$(grep -m 1 ^flags /proc/cpuinfo | awk -F': ' '{print $2}')
@@ -703,7 +700,7 @@ assert_cpu_supports_x86_64_v3() {
     fi
 }
 
-# 判断语言字符是否合法，允许全名和缩写
+# Validate the language string, accepting both full names and abbreviations
 is_valid_lang_chars() {
     [[ "$1" =~ ^[A-Za-z_-]+$ ]]
 }
@@ -716,27 +713,27 @@ lang_convert() {
         return
     fi
 
-    # 如果是 fallback_ 开头的，先得到 fallback 后的 cc-cc
+    # for a fallback_ prefix, first resolve the cc-cc it falls back to
     if [[ "$out_format" = fallback_* ]]; then
         in=$(lang_convert_inner "$in" fallback_cc-cc)
-        # 如果要输出 fallback_cc-cc ，直接输出
+        # to output fallback_cc-cc, print it directly
         if [ "$out_format" = fallback_cc-cc ]; then
             printf '%s' "$in"
             return
         fi
-        # 去除 fallback_ 前缀
+        # strip the fallback_ prefix
         out_format=${out_format#fallback_}
     fi
 
-    # 尝试转换成目标格式
+    # try converting to the target format
     local out
     out=$(lang_convert_inner "$in" "$out_format")
 
-    # 如果转换成功，则表示输入的语言在列表里面
+    # a successful conversion means the language is in the list
     if [ -n "$out" ]; then
         printf '%s' "$out"
     else
-        # 如果没有，则手动截取
+        # otherwise cut it out by hand
         case "$out_format" in
         cc) cut -d- -f1 <<<"$in" ;;
         cc-cc) cut -d- -f1-2 <<<"$in" ;;
@@ -753,7 +750,7 @@ lang_convert_inner() {
         return
     fi
 
-    # 可能得到 / ，用 is_valid_lang_chars 过滤掉
+    # this can yield /, which is filtered out by is_valid_lang_chars
     local out
     if out=$(
         lang_table_with_head | sed 1d | to_lower | awk \
@@ -772,16 +769,16 @@ lang_convert_inner() {
 get_col_number() {
     local col_name=$1
 
-    # 找出第一行，用 xargs -n 1 转成列，然后用 grep 找到行号，再用 cut 取出行号
+    # find the first line: xargs -n 1 turns it into a column, grep finds the line number, cut extracts it
     lang_table_with_head | head -1 | xargs -n 1 | grep -Fxn "$col_name" | cut -d: -f1
 }
 
 lang_table_with_head() {
-    # 没有 gb mx 开头的镜像，列出它们作用是，用户输入时识别成 en-gb es-mx
-    # ca 并非对应 fr-ca
-    # pt 对应 pt-br，而不是 pt-pt
-    # uk 对应乌克兰语而不是英国，如果用户输入 uk ，要识别成乌克兰
-    # 第 5 列是可回落的语言
+    # there are no images starting with gb or mx; they are listed so user input maps to en-gb and es-mx
+    # ca does not correspond to fr-ca
+    # pt corresponds to pt-br, not pt-pt
+    # uk is Ukrainian, not the United Kingdom, so uk must resolve to Ukrainian
+    # column 5 lists the languages that can be fallen back to
     cat <<EOF
 cc  cc-cc    cc-cc-cc    full_language     fallback_cc-cc
 ar  ar-sa        /       Arabic
@@ -827,11 +824,11 @@ EOF
 }
 
 parse_windows_image_name() {
-    # 将名称改成内部名称
-    # home basic 改为 homebasic
-    # home premium 改为 homepremium
-    # windows server 2008 server 改为 windows longhorn server
-    # 注意 windows server 2008 r2 serverdatacenter 不用改
+    # Convert the name to its internal form
+    # home basic -> homebasic
+    # home premium -> homepremium
+    # windows server 2008 server -> windows longhorn server
+    # note that windows server 2008 r2 serverdatacenter needs no change
     image_name=$(
         <<<"$image_name" sed \
             -e 's/^windows server 2008 server/windows longhorn server/' \
@@ -874,7 +871,7 @@ parse_windows_image_name() {
         shift
     done
 
-    # longhorn 改成 server 2008 用于 iso 查找
+    # longhorn -> server 2008, used for the iso lookup
     if [ "$version" = longhorn ] && [[ "$edition" = server* ]]; then
         server=server
         version=2008
@@ -883,12 +880,12 @@ parse_windows_image_name() {
 
 is_have_arm64_version() {
     case "$version" in
-    # win8.x 有 arm32 版本，但是我们不支持 arm32
+    # win8.x has an arm32 edition, but arm32 is not supported
     10)
         case "$edition" in
         home | 'home single language' | pro | education | enterprise | 'pro education' | 'pro for workstations') return ;;
         'iot enterprise') return ;;
-        # arm ltsc 只有 2021 有 iso
+        # arm ltsc only has a 2021 iso
         'enterprise ltsc 2021' | 'iot enterprise ltsc 2021') return ;;
         esac
         ;;
@@ -909,7 +906,7 @@ find_windows_iso() {
         lang=en-us
     fi
 
-    # 用户输入的语言最优先
+    # a language given by the user takes priority
     langs=$lang
     langs+=" $(lang_convert cc-cc-cc)          $(lang_convert cc-cc)          $(lang_convert cc)"
     langs+=" $(lang_convert fallback_cc-cc-cc) $(lang_convert fallback_cc-cc) $(lang_convert fallback_cc)"
@@ -919,7 +916,7 @@ find_windows_iso() {
     full_langs=$(xargs -n 1 <<<"$full_langs" | awk '!seen[$0]++' | xargs)
 
     case "$basearch" in
-    x86) # 备用，查找功能目前不支持 32 位
+    x86) # spare; the lookup feature does not support 32-bit yet
         arch_win=x86
         arch_win_vlsc='32-?bit'
         ;;
@@ -950,7 +947,7 @@ get_windows_iso_link() {
                 echo _
                 ;;
             business | enterprise)
-                # ntriver 的 iso 是 vlsc 的
+                # the ntriver isos are the vlsc ones
                 ;;
             esac
             ;;
@@ -963,8 +960,8 @@ get_windows_iso_link() {
                 ;;
             homebasic)
                 case "$arch_win" in
-                # ntriver 没有单独的 win7 homebasic x64 iso
-                # 可从 homepremium iso 获取
+                # ntriver has no standalone win7 homebasic x64 iso
+                # it can be taken from the homepremium iso
                 x86) echo "home basic" ;;
                 x64) echo "home premium" ;;
                 esac
@@ -997,8 +994,8 @@ get_windows_iso_link() {
                 ;;
             education | 'pro education' | 'pro for workstations')
                 case "$arch_win" in
-                arm64) echo 'consumer editions' ;;     # 只能从 consumer 获取
-                x86 | x64) echo 'business editions' ;; # iso 更小
+                arm64) echo 'consumer editions' ;;     # only available from consumer
+                x86 | x64) echo 'business editions' ;; # smaller iso
                 esac
                 ;;
             # iot
@@ -1008,7 +1005,7 @@ get_windows_iso_link() {
             # ltsc
             'enterprise 2015 ltsb' | 'enterprise 2016 ltsb' | 'enterprise ltsc 2019' | 'enterprise ltsc 2021')
                 case "$arch_win" in
-                arm64) echo "iot $edition" ;; # 只能从 iot ltsc iso 获取
+                arm64) echo "iot $edition" ;; # only available from the iot ltsc iso
                 x86 | x64) echo "$edition" ;;
                 esac
                 ;;
@@ -1027,13 +1024,13 @@ get_windows_iso_link() {
                 echo 'business editions'
                 ;;
             education | 'pro education' | 'pro for workstations')
-                # arm business iso 都没有 education, pro education, pro for workstations
-                # 即使它的名字包含 EDU
+                # the arm business isos have no education, pro education or pro for workstations
+                # even though the name contains EDU
                 # SW_DVD9_Win_Pro_10_22H2.31_Arm64_English_Pro_Ent_EDU_N_MLF_X24-05074.ISO
                 # en-us_windows_11_business_editions_version_25h2_arm64_dvd_8afc9b39.iso
                 case "$arch_win" in
-                arm64) echo 'consumer editions' ;; # 只能从 consumer 获取
-                x64) echo 'business editions' ;;   # iso 更小
+                arm64) echo 'consumer editions' ;; # only available from consumer
+                x64) echo 'business editions' ;;   # smaller iso
                 esac
                 ;;
             # iot
@@ -1043,7 +1040,7 @@ get_windows_iso_link() {
             # ltsc
             'enterprise ltsc 2024')
                 case "$arch_win" in
-                arm64) echo "iot $edition" ;; # 只能从 iot ltsc iso 获取
+                arm64) echo "iot $edition" ;; # only available from the iot ltsc iso
                 x64) echo "$edition" ;;
                 esac
                 ;;
@@ -1089,8 +1086,8 @@ get_windows_iso_link() {
             'enterprise ltsc 2021') echo 'ent ltsc 2021' ;;
             'iot enterprise 2015 ltsb') echo 'iot enterprise 2015 ltsb' ;; # √
             'iot enterprise 2016 ltsb') echo 'iot enterprise ltsb 1607' ;; # √
-            'iot enterprise ltsc 2019') echo 'iot enterprise ltsc 2019' ;; # 没找到
-            'iot enterprise ltsc 2021') echo 'iot enterprise ltsc 2021' ;; # 没找到
+            'iot enterprise ltsc 2019') echo 'iot enterprise ltsc 2019' ;; # not found
+            'iot enterprise ltsc 2021') echo 'iot enterprise ltsc 2021' ;; # not found
             esac
             ;;
         11)
@@ -1103,11 +1100,11 @@ get_windows_iso_link() {
         esac
     }
 
-    # msdl 没有每月发布的 iso
-    # msdl 只有 consumer 版本，因此里面的 pro 版本不是 vl 版
-    # 8.1 没有每月发布的 iso，因此优先从 msdl 下载
-    # win10 22h2 arm 有每月发布的 iso，因此不从 msdl 下载
-    # win10/11 ltsc 没有每月发布的 iso，但是 msdl 没有 ltsc 版本
+    # msdl has no monthly iso releases
+    # msdl only carries consumer editions, so its pro edition is not the vl one
+    # 8.1 has no monthly iso, so prefer downloading it from msdl
+    # win10 22h2 arm does have a monthly iso, so do not use msdl for it
+    # win10/11 ltsc has no monthly iso, but msdl carries no ltsc edition either
     get_label_msdl() {
         :
     }
@@ -1126,7 +1123,7 @@ get_windows_iso_link() {
         grep -Ewq 'ltsb|ltsc' <<<"$edition"
     }
 
-    # 部分 bash 例如 ubuntu 22.04 不支持 $() 里面嵌套case，所以定义成函数
+    # some bash builds (e.g. ubuntu 22.04) cannot nest a case inside $(), so use a function
     label_msdn=$(get_label_msdn)
     label_msdl=$(get_label_msdl)
     label_vlsc=$(get_label_vlsc)
@@ -1142,10 +1139,10 @@ get_windows_iso_link() {
     echo "Languages:  $langs $full_langs"
     echo
 
-    # 先判断是否能自动查找该版本
-    # 再判断是否支持 arm
-    # 这样可以在输入错误 Edition 时例如 windows 11 enterprise ltsc 2021
-    # 显示名称错误，而不是显示该版本不支持 arm
+    # first check whether this edition can be looked up automatically
+    # then check whether arm is supported
+    # that way a wrong Edition such as "windows 11 enterprise ltsc 2021"
+    # reports a bad name rather than a lack of arm support
 
     if [ -z "$page_url" ] || { [ -z "$label_msdn" ] && [ -z "$label_msdl" ] && [ -z "$label_vlsc" ]; }; then
         error_and_exit "Not support find this iso. Check if --image-name is wrong. Or set --iso manually."
@@ -1161,24 +1158,24 @@ get_windows_iso_link() {
         http_to_host=$(get_scheme_and_host_by_url "$page_url")
         http_to_current_dir=$(dirname "$page_url")
 
-        curl -L "$page_url" | tr -d '\n' | # 合成一行
+        curl -L "$page_url" | tr -d '\n' | # join into one line
             if [[ "$page_url" =~ massgrave.dev ]]; then
-                sed -e 's,<a ,\n<a ,g' -e 's,</a>,</a>\n,g' |         # 使每个 <a></a> 占一行
-                    grep -Ei '\.(iso|img)</a>$' |                     # 找出是 iso 或 img 的行
-                    sed -E 's,<a href="?([^" ]+)"?.+>(.+)</a>,\2 \1,' # 提取文件名和链接
+                sed -e 's,<a ,\n<a ,g' -e 's,</a>,</a>\n,g' |         # put each <a></a> on its own line
+                    grep -Ei '\.(iso|img)</a>$' |                     # keep the iso and img lines
+                    sed -E 's,<a href="?([^" ]+)"?.+>(.+)</a>,\2 \1,' # extract the filename and link
             else
-                sed -e 's,<td><strong>,\n<td><strong>,g' -e 's,</a>,</a>\n,g' |   # 使每个镜像占一行
-                    grep -Ei '\.(iso|img)</strong>' |                             # 找出是 iso 或 img 的行
-                    sed -E 's,<td><strong>([^<]+).+<a href="?([^" ]+)"?.+,\1 \2,' # 提取文件名和链接
+                sed -e 's,<td><strong>,\n<td><strong>,g' -e 's,</a>,</a>\n,g' |   # put each image on its own line
+                    grep -Ei '\.(iso|img)</strong>' |                             # keep the iso and img lines
+                    sed -E 's,<td><strong>([^<]+).+<a href="?([^" ]+)"?.+,\1 \2,' # extract the filename and link
             fi |
 
-            # 如果链接是 / 开头，则补全域名
-            # 如果链接非 https:// 开头，则补全域名和目录
+            # if the link starts with /, prepend the domain
+            # if it does not start with https://, prepend the domain and directory
             sed -E "s, (/), $http_to_host\1," |
             awk '{if ($2 !~ /^https?:\/\//) $2 = "'$http_to_current_dir/'" $2; print}' |
 
-            # 如果不是 ltsc ，应该先去除 ltsc 链接，否则最终链接有 ltsc 的
-            # 例如查找 windows 10 iot enterprise，会得到
+            # for a non-ltsc lookup, drop the ltsc links first or the final link will be an ltsc one
+            # e.g. looking up windows 10 iot enterprise yields
             # en-us_windows_10_iot_enterprise_ltsc_2021_arm64_dvd_e8d4fc46.iso
             # en-us_windows_10_iot_enterprise_version_22h2_arm64_dvd_39566b6b.iso
             if is_ltsc; then
@@ -1204,13 +1201,13 @@ get_best_windows_iso_line() {
     local lines
     lines=$(cat)
 
-    # 在所有符合的 iso 中
-    # 先选择 win10/11 大版本更新的 (version 26h1) 或者有 sp 版本的 (sp1, windows_8.1_with_update_)
-    # 再选择有日期更新的 (updated_july_2026)
-    # 再选择 vl
-    # 再按版本号排序选择最新版
+    # Among all matching isos:
+    # prefer a win10/11 feature update (version 26h1) or one with a service pack (sp1, windows_8.1_with_update_)
+    # then one with a date update (updated_july_2026)
+    # then a vl edition
+    # then sort by version and take the newest
 
-    # 但是也有例外
+    # there are exceptions though
     # zh-cn_windows_server_2019_x64_dvd_19d65722.iso                    2022-11-15
     # cn_windows_server_2019_updated_april_2021_x64_dvd_a6dae187.iso    2021-04-20
 
@@ -1248,10 +1245,10 @@ get_windows_iso_link_inner() {
                 fi
             done
 
-            # 用于准确匹配，例如防止 2012 匹配到 2012 r2
-            # 首先匹配 label 后面紧接着这些关键字的
-            # 然后匹配 label 后面紧接着 x64/arm64 的
-            # 最后模糊匹配
+            # for exact matching, e.g. to stop 2012 matching 2012 r2
+            # first match those where the keyword directly follows the label
+            # then those where x64/arm64 directly follows the label
+            # finally fall back to a fuzzy match
             regexs+=("${prefix}(version|vl|with|updated|sp[0-9])_.*${arch_win}.*\.(iso|img)")
             regexs+=("${prefix}${arch_win}.*\.(iso|img)")
             regexs+=("${prefix}.*${arch_win}.*\.(iso|img)")
@@ -1265,22 +1262,22 @@ get_windows_iso_link_inner() {
     # SW_DVD9_Win_Pro_10_22H2.15_Arm64_English_Pro_Ent_EDU_N_MLF_X23-67223.ISO
     # SWDVD9_WinSrvSTDCORE2025_24H2.16_64Bit_English_DC_STD_MLF_RTMUpdJan26_X24-26760.iso
 
-    # 先判断 full_lang 是否为空
-    # 因为假如用户输入的 lang 不正确，full_lang 就为空，正则表达式就无法只匹配当前语言
+    # check whether full_lang is empty first,
+    # because an invalid lang leaves it empty and the regex could then match any language
     for full_lang in $full_langs; do
         if [ -n "$label_vlsc" ] && [ -n "$full_lang" ]; then
             regexs+=("sw_?dvd[59]_(SA_)?win(dows)?_?${label_vlsc}_?${version}_.*${arch_win_vlsc}.*_${full_lang}.*\.(iso|img)")
             regexs+=("sw_?dvd[59]_(SA_)?win_?(dows)?${version}_${label_vlsc}_?.*${arch_win_vlsc}.*_${full_lang}.*\.(iso|img)")
-            # LTSC 没有 windows 主版本号
-            # SW_DVD5_WIN_ENT_LTSB_10_2015_64BIT_Arabic_MLF_X20-26578.ISO # 将 ENT_LTSB_10_2015 视为 label
-            # SW_DVD5_WIN_ENT_LTSB_2016_64BIT_Arabic_MLF_X21-07425.ISO    # 将 ENT_LTSB_2016    视为 label
+            # LTSC has no windows major version number
+            # SW_DVD5_WIN_ENT_LTSB_10_2015_64BIT_Arabic_MLF_X20-26578.ISO # treat ENT_LTSB_10_2015 as the label
+            # SW_DVD5_WIN_ENT_LTSB_2016_64BIT_Arabic_MLF_X21-07425.ISO    # treat ENT_LTSB_2016    as the label
             if is_ltsc; then
                 regexs+=("sw_?dvd[59]_(SA_)?win(dows)?_?${label_vlsc}_?.*${arch_win_vlsc}.*_${full_lang}.*\.(iso|img)")
             fi
         fi
     done
 
-    # 查找
+    # search
     for regex in "${regexs[@]}"; do
         regex=${regex// /_}
 
@@ -1302,12 +1299,12 @@ get_windows_iso_link_inner() {
 }
 
 set_var() {
-    # eval 不安全
+    # eval is unsafe
 
-    # 仅 bash 可用
+    # bash only
     printf -v "$1" "%s" "$2"
 
-    # 或者
+    # or
     # IFS= read -r "$1" <<<"$2"
 }
 
@@ -1336,7 +1333,7 @@ setos() {
     setos_alpine() {
         is_virt && flavour=virt || flavour=lts
 
-        # 不要用https 因为甲骨文云arm initramfs阶段不会从硬件同步时钟，导致访问https出错
+        # do not use https: on Oracle Cloud arm the initramfs does not sync the clock from hardware, which breaks https
         mirror=http://dl-cdn.alpinelinux.org/alpine/v$releasever
         set_osvar vmlinuz "$mirror/releases/$basearch/netboot/vmlinuz-$flavour"
         set_osvar initrd "$mirror/releases/$basearch/netboot/initramfs-$flavour"
@@ -1353,7 +1350,7 @@ setos() {
             error_and_exit "Debian $releasever ELTS does not support aarch64."
         fi
 
-        # 用此标记要是否 elts, 用于安装后修改 elts/etls-cn 源
+        # this flag records whether it is elts, used to fix the elts repo after installation
         # shellcheck disable=SC2034
         is_debian_elts && elts=1 || elts=0
 
@@ -1368,10 +1365,10 @@ setos() {
         esac
 
 
-        # udeb_mirror 安装时的源
-        # deb_mirror 安装后要修改成的源
+        # udeb_mirror is the repo used during installation
+        # deb_mirror is the repo to switch to afterwards
         if is_debian_elts; then
-            # 按道理不应该用官方源，但找不到其他源
+            # the official repo should not really be used, but there is no other
             udeb_mirror=deb.freexian.com/extended-lts
             deb_mirror=deb.freexian.com/extended-lts
             initrd_mirror=archive.debian.org/debian
@@ -1382,21 +1379,21 @@ setos() {
             initrd_mirror=$mirror
         fi
 
-        # 云镜像和 firmware 下载源
-        cdimage_mirror=https://cdimage.debian.org/images # 在瑞典，不是 cdn
-        # cloud.debian.org 同样在瑞典，不是 cdn
+        # cloud image and firmware download source
+        cdimage_mirror=https://cdimage.debian.org/images # in Sweden, not a CDN
+        # cloud.debian.org is likewise in Sweden and not a CDN
 
         is_virt && flavour=-cloud || flavour=
-        # debian 10 云内核 vultr efi vnc 没有显示
+        # the debian 10 cloud kernel shows nothing over vnc on vultr efi
         [ "$releasever" -le 10 ] && flavour=
-        # 甲骨文 arm64 cloud 内核 vnc 没有显示
+        # the Oracle arm64 cloud kernel shows nothing over vnc
         [ "$basearch_alt" = arm64 ] && flavour=
 
         if is_use_cloud_image; then
             # cloud image
             # https://salsa.debian.org/cloud-team/debian-cloud-images/-/tree/master/config_space/bookworm/files/etc/default/grub.d
-            # cloud 包括各种奇怪的优化，例如不显示 grub 菜单
-            # 因此使用 nocloud
+            # cloud includes various odd optimizations, such as hiding the grub menu,
+            # so use nocloud instead
             if false; then
                 is_virt && ci_type=genericcloud || ci_type=generic
             else
@@ -1404,7 +1401,7 @@ setos() {
             fi
             set_osvar img "$cdimage_mirror/cloud/$codename/latest/debian-$releasever-$ci_type-$basearch_alt.qcow2"
         else
-            # 传统安装
+            # traditional install
             initrd_dir=dists/$codename/main/installer-$basearch_alt/current/images/netboot/debian-installer/$basearch_alt
 
             set_osvar udeb_mirror "$udeb_mirror"
@@ -1415,7 +1412,7 @@ setos() {
             set_osvar codename "$codename"
         fi
 
-        # 官方安装和云镜像都会用到的
+        # used by both the official installer and the cloud image
         set_osvar deb_mirror "$deb_mirror"
         set_osvar kernel "linux-image$flavour-$basearch_alt"
     }
@@ -1424,11 +1421,11 @@ setos() {
         if is_use_cloud_image; then
             :
         else
-            # 传统安装
-            # http.kali.org (geoip 重定向) 到 kali.download (cf) 或最近的站点
-            # 文档还说 which is guaranteed to be up-to-date
-            # 但是目测有可能重定义到一个拉黑了部分 IP 的服务器
-            # 因此这里用 kali.download (cf)
+            # traditional install
+            # http.kali.org (geoip redirect) points at kali.download (cf) or the nearest site
+            # the docs also say it is guaranteed to be up-to-date
+            # but it appears it can redirect to a server that blocks some IPs
+            # so use kali.download (cf) directly
             # https://www.kali.org/docs/community/kali-linux-mirrors/
             # https://www.kali.org/docs/general-use/kali-apt-sources/
             hostname=kali.download
@@ -1444,7 +1441,7 @@ setos() {
             set_osvar udeb_mirror "$hostname/kali"
             set_osvar codename "$codename"
             set_osvar kernel "linux-image$flavour-$basearch_alt"
-            # 缺少 firmware 下载
+            # firmware download is missing
         fi
     }
 
@@ -1461,9 +1458,9 @@ setos() {
             # cloud image
             ci_mirror=https://cloud-images.ubuntu.com
 
-            # 以下版本有 minimal 镜像
-            # amd64 所有
-            # arm64 24.04 和以上
+            # the following versions have a minimal image
+            # amd64: all
+            # arm64: 24.04 and newer
             is_have_minimal_image() {
                 [ "$basearch_alt" = amd64 ] || [ "${releasever%.*}" -ge 24 ]
             }
@@ -1479,7 +1476,7 @@ setos() {
                 fi
                 set_osvar img "$ci_mirror/minimal/releases/$codename/release/ubuntu-$releasever-minimal-cloudimg-$basearch_img.img"
             else
-                # 用 codename 而不是 releasever，可减少一次跳转
+                # using the codename rather than releasever saves a redirect
                 set_osvar img "$ci_mirror/releases/$codename/release/ubuntu-$releasever-server-cloudimg-$basearch_img.img"
             fi
         else

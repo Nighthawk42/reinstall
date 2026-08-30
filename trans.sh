@@ -4493,53 +4493,53 @@ EOF
         echo "Use kernel flavor: $flavor"
 
         # side note
-        # 如果某个包是 auto 状态且有更新
-        # 则 apt install PKG 只会进行更新，不会将包设置成 manual
-        # 需要再次运行 apt install PKG 才会将包设置成 manual
+        # if a package is in the auto state and has an update available,
+        # apt install PKG only upgrades it and does not mark it manual
+        # apt install PKG must be run a second time to mark it manual
 
-        # 该方法包含了 apt-mark manual
+        # this function already does apt-mark manual
         chroot_apt_install $os_dir "linux-image-$flavor"
 
-        # 使用 autoremove 删除多余内核
+        # use autoremove to drop the surplus kernels
         chroot_apt_autoremove $os_dir
 
-        # 安装固件+微码
+        # Install firmware and microcode
         if fw_pkgs=$(get_ucode_firmware_pkgs) && [ -n "$fw_pkgs" ]; then
             chroot_apt_install $os_dir $fw_pkgs
         fi
 
-        # 网络配置
+        # Network configuration
         # 18.04+ netplan
-        # 避免删除 cloud-init 后，minimal 镜像的 netplan.io 被 autoremove
+        # stop netplan.io on the minimal image being autoremoved after cloud-init is removed
         chroot $os_dir apt-mark manual netplan.io
 
-        # 生成 cloud-init 网络配置
+        # Generate the cloud-init network configuration
         create_cloud_init_network_config $os_dir/net.cfg
 
-        # ubuntu 18.04 cloud-init 版本 23.1.2，因此不用处理 onlink
+        # ubuntu 18.04 ships cloud-init 23.1.2, so onlink needs no handling
 
-        # 如果不是输出到 / 则不会生成 50-cloud-init.yaml
-        # 注意比较多了什么东西
+        # 50-cloud-init.yaml is only generated when the output goes to /
+        # note what extra files appear
         if false; then
             chroot $os_dir cloud-init devel net-convert \
                 -p /net.cfg -k yaml -d /out -D ubuntu -O netplan
             sed -Ei "/^[[:space:]]+set-name:/d" $os_dir/out/etc/netplan/50-cloud-init.yaml
             cp $os_dir/out/etc/netplan/50-cloud-init.yaml $os_dir/etc/netplan/
 
-            # 清理
+            # Clean up
             rm -rf $os_dir/net.cfg $os_dir/out
         else
             chroot $os_dir cloud-init devel net-convert \
                 -p /net.cfg -k yaml -d / -D ubuntu -O netplan
             sed -Ei "/^[[:space:]]+set-name:/d" $os_dir/etc/netplan/50-cloud-init.yaml
 
-            # 清理
+            # Clean up
             rm -rf $os_dir/net.cfg
         fi
 
-        # 自带的 60-cloudimg-settings.conf 禁止了 PasswordAuthentication
-        # 可删除可不删除，因为现在会先读取有效 sshd 配置再修改 sshd 配置
-        # 如果要删除 60-cloudimg-settings.conf 则要在 change_ssh_conf_if_different 之前删除
+        # the bundled 60-cloudimg-settings.conf disables PasswordAuthentication
+        # it can be removed or kept, since the effective sshd config is now read before being modified
+        # if 60-cloudimg-settings.conf is to be removed, do it before change_ssh_conf_if_different
         if false; then
             file=$os_dir/etc/ssh/sshd_config.d/60-cloudimg-settings.conf
             if [ -f $file ]; then
@@ -4550,45 +4550,45 @@ EOF
             fi
         fi
 
-        # 更改 efi 目录的 grub.cfg 写死的 fsuuid
-        # 因为 24.04 fsuuid 对应 boot 分区
+        # Fix the hard-coded fsuuid in the efi directory grub.cfg,
+        # because on 24.04 that fsuuid refers to the boot partition
         efi_grub_cfg=$os_dir/boot/efi/EFI/ubuntu/grub.cfg
         if is_efi; then
             os_uuid=$(lsblk -rno UUID "/dev/$(xda 2)")
             sed -Ei "s|[0-9a-f-]{36}|$os_uuid|i" $efi_grub_cfg
 
-            # 24.04 移除 boot 分区后，需要添加 /boot 路径
+            # once the 24.04 boot partition is removed, the /boot path must be added
             if grep "'/grub'" $efi_grub_cfg; then
                 sed -i "s|'/grub'|'/boot/grub'|" $efi_grub_cfg
             fi
         fi
 
-        # 处理 40-force-partuuid.cfg
+        # Handle 40-force-partuuid.cfg
         force_partuuid_cfg=$os_dir/etc/default/grub.d/40-force-partuuid.cfg
         if [ -e $force_partuuid_cfg ]; then
             if is_virt; then
-                # 更改写死的 partuuid
+                # change the hard-coded partuuid
                 os_part_uuid=$(lsblk -rno PARTUUID "/dev/$(xda 2)")
                 sed -i "s/^GRUB_FORCE_PARTUUID=.*/GRUB_FORCE_PARTUUID=$os_part_uuid/" $force_partuuid_cfg
             else
-                # 独服不应该使用 initrdless boot
+                # a dedicated server should not use initrdless boot
                 sed -i "/^GRUB_FORCE_PARTUUID=/d" $force_partuuid_cfg
             fi
         fi
 
-        # 要重新生成 grub.cfg，因为
-        # 1 我们删除了 boot 分区
-        # 2 改动了 /etc/default/grub.d/40-force-partuuid.cfg
+        # grub.cfg must be regenerated, because
+        # 1 we removed the boot partition
+        # 2 we changed /etc/default/grub.d/40-force-partuuid.cfg
         chroot $os_dir update-grub
 
-        # 还原 grub 配置（os prober）
+        # Restore the grub configuration (os prober)
         mv $os_dir/etc/default/grub.orig $os_dir/etc/default/grub
 
         # fstab
-        # 24.04 镜像有boot分区，但我们不需要
+        # the 24.04 image has a boot partition, which we do not need
         sed -i '/[[:space:]]\/boot[[:space:]]/d' $os_dir/etc/fstab
         if ! is_efi; then
-            # bios 删除 efi 条目
+            # bios: remove the efi entry
             sed -i '/[[:space:]]\/boot\/efi[[:space:]]/d' $os_dir/etc/fstab
         fi
 
@@ -4602,7 +4602,7 @@ EOF
         esac
     )
 
-    # yum/apt 安装软件时需要的内存总大小
+    # total memory needed while yum/apt installs packages
     need_ram=$(
         case "$distro" in
         ubuntu) echo 1024 ;;
@@ -4612,7 +4612,7 @@ EOF
 
     connect_qcow
 
-    # 镜像分区格式
+    # image partition format
     # centos/rocky/almalinux/rhel: xfs
     # oracle x86_64:          lvm + xfs
     # oracle aarch64 cloud:   xfs
@@ -4644,21 +4644,21 @@ EOF
         esac
     }
 
-    # 可以直接选择最后一个分区为系统分区?
-    # almalinux9 boot 分区的类型不是规定的 uuid
-    # openeuler boot 分区是 vfat 格式
-    # openeuler arm 25.09 是 mbr 分区表, efi boot 是同一个分区，vfat 格式
+    # could the last partition simply be taken as the system partition?
+    # the almalinux9 boot partition does not use the standard type uuid
+    # the openeuler boot partition is vfat
+    # openeuler arm 25.09 uses an mbr table where efi and boot are the same vfat partition
 
     info "qcow2 Partitions check"
 
-    # 检测分区表类型
+    # Detect the partition table type
     partition_table_format=$(get_partition_table_format /dev/nbd0)
     need_reinstall_grub_efi=false
     if is_efi && [ "$partition_table_format" = "msdos" ]; then
         need_reinstall_grub_efi=true
     fi
 
-    # 通过检测文件判断是什么分区
+    # Identify each partition by the files it contains
     os_part='' boot_part='' efi_part=''
     mkdir -p /nbd-test
     for part in $(lsblk /dev/nbd0p* --sort SIZE -no NAME,FSTYPE |
@@ -4673,14 +4673,14 @@ EOF
                 os_part=$mapper_part
             fi
             # shellcheck disable=SC2010
-            # 当 boot 作为独立分区时，vmlinuz 等文件在根目录
-            # 当 boot 不是独立分区时，vmlinuz 等文件在 /boot 目录
+            # when boot is a separate partition, vmlinuz and friends are in the root directory
+            # when it is not, they are in /boot
             if ls /nbd-test/ /nbd-test/boot/ 2>/dev/null | grep -Ei '^(vmlinuz|initrd|initramfs)'; then
                 boot_part=$mapper_part
             fi
-            # mbr + efi 引导 ，分区表没有 esp guid
-            # 因此需要用 efi 文件判断是否 efi 分区
-            # efi 文件可能在 efi 目录的子目录，子目录层数不定
+            # with mbr + efi boot, the partition table has no esp guid,
+            # so the efi files are used to identify the efi partition
+            # those files may sit in a subdirectory of efi, at an unpredictable depth
             if find /nbd-test/ -type f -ipath '/nbd-test/EFI/*.efi' 2>/dev/null | grep .; then
                 efi_part=$mapper_part
             fi
@@ -4690,7 +4690,7 @@ EOF
 
     info "qcow2 Partitions"
     lsblk -f /dev/nbd0 -o +PARTTYPE
-    # 显示 OS/EFI/Boot 文件在哪个分区
+    # Show which partition holds the OS/EFI/Boot files
     echo "---"
     echo "Table:     $partition_table_format"
     echo "Part OS:   $os_part"
@@ -4698,11 +4698,11 @@ EOF
     echo "Part Boot: $boot_part"
     echo "---"
 
-    # 分区寻找方式
-    # 系统/分区          cmdline:root  fstab:efi
+    # How the partitions are located
+    # system/partition     cmdline:root   fstab:efi
     # rocky             LABEL=rocky   LABEL=EFI
     # ubuntu            PARTUUID      LABEL=UEFI
-    # 其他el/ol         UUID           UUID
+    # other el/ol          UUID           UUID
 
     IFS=, read -r os_part_uuid os_part_label os_part_fstype \
         < <(lsblk /dev/$os_part -rno UUID,LABEL,FSTYPE | tr ' ' ,)
@@ -4714,8 +4714,8 @@ EOF
 
     mkdir -p /nbd /nbd-boot /nbd-efi
 
-    # 使用目标系统的格式化程序
-    # centos8 如果用alpine格式化xfs，grub2-mkconfig和grub2里面都无法识别xfs分区
+    # Use the target system's own formatting tool
+    # if xfs is formatted by alpine on centos8, neither grub2-mkconfig nor grub2 can read the xfs partition
     mount_nouuid /dev/$os_part /nbd/
     mount_pseudo_fs /nbd/
     case "$os_part_fstype" in
@@ -4724,32 +4724,32 @@ EOF
     esac
     umount -R /nbd/
 
-    # TODO: ubuntu 镜像缺少 mkfs.fat/vfat/dosfstools? initrd 不需要检查fs完整性？
+    # TODO: does the ubuntu image lack mkfs.fat/vfat/dosfstools? does the initrd not need an fs integrity check?
 
-    # 创建并挂载 /os
+    # Create and mount /os
     mkdir -p /os
     mount -o noatime "/dev/$(xda 2)" /os/
 
-    # 如果是 efi 则创建 /os/boot/efi
-    # 如果镜像有 efi 分区也创建 /os/boot/efi，用于复制 efi 分区的文件
+    # create /os/boot/efi when this is efi
+    # also create it when the image has an efi partition, to copy that partition\'s files
     if is_efi || [ -n "$efi_part" ]; then
         mkdir -p /os/boot/efi/
 
-        # 挂载 /os/boot/efi
-        # 预先挂载 /os/boot/efi 因为可能 boot 和 efi 在同一个分区（openeuler 24.03 arm）
-        # 复制 boot 时可以会复制 efi 的文件
+        # Mount /os/boot/efi
+        # mount it in advance, because boot and efi may be the same partition (openeuler 24.03 arm)
+        # in which case copying boot also copies the efi files
         if is_efi; then
             mount -o $efi_mount_opts "/dev/$(xda 1)" /os/boot/efi/
         fi
     fi
 
-    # 复制系统分区
+    # Copy the system partition
     echo Copying os partition...
     mount_nouuid -o ro /dev/$os_part /nbd/
     cp -a /nbd/* /os/
     umount /nbd/
 
-    # 复制独立的boot分区，如果有
+    # Copy the separate boot partition, if there is one
     if [ -n "$boot_part" ] && ! [ "$boot_part" = "$os_part" ]; then
         echo Copying boot partition...
         mount_nouuid -o ro /dev/$boot_part /nbd-boot/
@@ -4757,8 +4757,8 @@ EOF
         umount /nbd-boot/
     fi
 
-    # 复制独立的efi分区，如果有
-    # 如果 efi 和 boot 是同一个分区，则复制 boot 分区时已经复制了 efi 分区的文件
+    # Copy the separate efi partition, if there is one
+    # if efi and boot are the same partition, the efi files were already copied with boot
     if [ -n "$efi_part" ] && ! [ "$efi_part" = "$os_part" ] && ! [ "$efi_part" = "$boot_part" ]; then
         echo Copying efi partition...
         mount -o ro /dev/$efi_part /nbd-efi/
@@ -4766,7 +4766,7 @@ EOF
         umount /nbd-efi/
     fi
 
-    # 断开 qcow 并删除 qemu-img
+    # Disconnect qcow and remove qemu-img
     info "Disconnecting qcow2"
     if is_have_cmd vgchange; then
         vgchange -an
@@ -4775,7 +4775,7 @@ EOF
     disconnect_qcow
     apk del qemu-img
 
-    # 取消挂载硬盘
+    # Unmount the disk
     info "Unmounting disk"
     if is_efi; then
         umount /os/boot/efi/
@@ -4783,10 +4783,10 @@ EOF
     umount /os/
     umount /installer/
 
-    # 如果镜像有独立的efi分区（包括efi+boot在同一个分区），复制其uuid
-    # 如果有相同uuid的fat分区，则无法挂载
-    # 所以要先复制efi分区，断开nbd再复制uuid
-    # 复制uuid前要取消挂载硬盘 efi 分区
+    # if the image has a separate efi partition (including efi+boot combined), copy its uuid
+    # a fat partition with the same uuid cannot be mounted,
+    # so copy the efi partition first, disconnect nbd, then copy the uuid
+    # the efi partition must be unmounted before copying the uuid
     if is_efi && [ -n "$efi_part_uuid" ] && ! [ "$efi_part" = "$os_part" ]; then
         info "Copy efi partition uuid"
         apk add mtools
@@ -4795,24 +4795,24 @@ EOF
         update_part
     fi
 
-    # 删除 installer 分区并扩容
+    # Remove the installer partition and grow the filesystem
     info "Delete installer partition"
     apk add parted
     parted /dev/$xda -s -- rm 3
     update_part
     resize_after_install_cloud_image
 
-    # 重新挂载 /os /boot/efi
+    # Remount /os and /boot/efi
     info "Re-mount disk"
     mount -o noatime "/dev/$(xda 2)" /os/
     if is_efi; then
         mount -o $efi_mount_opts "/dev/$(xda 1)" /os/boot/efi/
     fi
 
-    # 创建 swap
+    # Create swap
     create_swap_if_ram_less_than $need_ram /os/swapfile
 
-    # 挂载伪文件系统
+    # Mount the pseudo filesystems
     mount_pseudo_fs /os/
 
     case "$distro" in
@@ -4820,14 +4820,14 @@ EOF
     *) modify_el_ol ;;
     esac
 
-    # 基本配置
+    # Basic configuration
     basic_init /os
 
-    # 最后才删除 cloud-init
-    # 因为生成 netplan/sysconfig 网络配置要用目标系统的 cloud-init
+    # Remove cloud-init last,
+    # because generating the netplan/sysconfig network configuration needs the target system's cloud-init
     remove_or_disable_cloud_init /os
 
-    # 删除 swapfile
+    # Remove the swapfile
     swapoff -a
     rm -f /os/swapfile
 }
@@ -4846,51 +4846,51 @@ dd_qcow() {
         partition_table_format=$(get_partition_table_format /dev/nbd0)
         orig_nbd_virtual_size=$(get_disk_size /dev/nbd0)
 
-        # 检查最后一个分区是否是 btrfs
-        # 即使awk结果为空，返回值也是0，加上 grep . 检查是否结果为空
+        # Check whether the last partition is btrfs
+        # awk exits 0 even with empty output, so grep . checks for an empty result
         if part_num=$(parted /dev/nbd0 -s print | awk NF | tail -1 | grep btrfs | awk '{print $1}' | grep .); then
             apk add btrfs-progs
             mkdir -p /mnt/btrfs
             mount /dev/nbd0p$part_num /mnt/btrfs
 
-            # 回收空数据块
+            # reclaim the empty data blocks
             btrfs device usage /mnt/btrfs
             btrfs balance start -dusage=0 /mnt/btrfs
             btrfs device usage /mnt/btrfs
 
-            # 计算可以缩小的空间
+            # calculate how much space can be freed
             free_bytes=$(btrfs device usage /mnt/btrfs -b | grep Unallocated: | awk '{print $2}')
-            reserve_bytes=$((100 * 1024 * 1024)) # 预留 100M 可用空间
+            reserve_bytes=$((100 * 1024 * 1024)) # reserve 100M of free space
             skrink_bytes=$((free_bytes - reserve_bytes))
 
             if [ $skrink_bytes -gt 0 ]; then
-                # 缩小文件系统
+                # shrink the filesystem
                 btrfs filesystem resize -$skrink_bytes /mnt/btrfs
-                # 缩小分区
+                # shrink the partition
                 part_start=$(parted /dev/nbd0 -s 'unit b print' | awk "\$1==$part_num {print \$2}" | sed 's/B//')
                 part_size=$(btrfs filesystem usage /mnt/btrfs -b | grep 'Device size:' | awk '{print $3}')
                 part_end=$((part_start + part_size - 1))
                 umount /mnt/btrfs
                 printf "yes" | parted /dev/nbd0 resizepart $part_num ${part_end}B ---pretend-input-tty
 
-                # 缩小 qcow2
+                # shrink the qcow2
                 disconnect_qcow
                 qemu-img resize --shrink $qcow_file $((part_end + 1))
 
-                # 重新连接
+                # reconnect
                 connect_qcow
             else
                 umount /mnt/btrfs
             fi
         fi
 
-        # 显示分区
+        # Show the partitions
         lsblk -o NAME,SIZE,FSTYPE,LABEL /dev/nbd0
 
-        # 将前1M dd到内存
+        # dd the first 1M into memory
         dd if=/dev/nbd0 of=/first-1M bs=1M count=1
 
-        # 将1M之后 dd到硬盘
+        # dd everything after 1M to disk
         # shellcheck disable=SC2194
         case 3 in
         1)
@@ -4898,12 +4898,12 @@ dd_qcow() {
             dd if=/dev/nbd0 of=/dev/$xda bs=1M skip=1 seek=1
             ;;
         2)
-            # 用原版 dd status=progress，但没有进度和剩余时间
+            # the real dd with status=progress, but no percentage or time remaining
             apk add coreutils
             dd if=/dev/nbd0 of=/dev/$xda bs=1M skip=1 seek=1 status=progress
             ;;
         3)
-            # 用 pv
+            # use pv
             apk add pv
             echo "Start DD Cloud Image..."
             pv -f /dev/nbd0 | dd of=/dev/$xda bs=1M skip=1 seek=1 iflag=fullblock
@@ -4912,35 +4912,35 @@ dd_qcow() {
 
         disconnect_qcow
     else
-        # 将前1M dd到内存，将1M之后 dd到硬盘
+        # dd the first 1M into memory and everything after 1M to disk
         qemu-img dd if=$qcow_file of=/first-1M bs=1M count=1
         qemu-img dd if=$qcow_file of=/dev/disk/by-label/os bs=1M skip=1
     fi
 
-    # 已 dd 并断开连接 qcow，可删除 qemu-img
+    # the qcow has been dd-ed and disconnected, so qemu-img can be removed
     apk del qemu-img
 
-    # 将前1M从内存 dd 到硬盘
+    # dd the first 1M from memory to disk
     umount /installer/
     dd if=/first-1M of=/dev/$xda
     rm -f /first-1M
 
-    # gpt 分区表开头记录了备份分区表的位置
-    # 如果 qcow2 虚拟容量 大于 实际硬盘容量
-    # 备份分区表的位置 将超出实际硬盘容量的大小
-    # partprobe 会报错
+    # A gpt table records the location of the backup table at the start of the disk
+    # if the qcow2 virtual size exceeds the real disk size,
+    # the backup table location falls beyond the end of the real disk
+    # and partprobe errors out
     # Error: Invalid argument during seek for read on /dev/vda
-    # parted 也无法正常工作
-    # 需要提前修复分区表
+    # parted also stops working
+    # so the partition table must be repaired first
 
-    # 目前只有这个例子，因为其他 qcow2 虚拟容量最多 5g，是设定支持的容量
-    # openSUSE-Leap-15.5-Minimal-VM.x86_64-kvm-and-xen.qcow2 容量是 25g
-    # 缩小 btrfs 分区后 dd 到 10g 的机器上
-    # 备份分区表的位置是 25g
-    # 需要修复到 10g 的位置上
-    # 否则 partprobe parted 都无法正常工作
+    # this is the only such case, since other qcow2 images are at most 5g, the supported size
+    # openSUSE-Leap-15.5-Minimal-VM.x86_64-kvm-and-xen.qcow2 is 25g
+    # after shrinking the btrfs partition it is dd-ed onto a 10g machine,
+    # where the backup table location is still 25g
+    # and must be repaired to the 10g position,
+    # otherwise neither partprobe nor parted works
 
-    # 仅这种情况才用 sgdisk 修复
+    # only this case is repaired with sgdisk
     if [ "$partition_table_format" = gpt ] &&
         [ "$orig_nbd_virtual_size" -gt "$(get_disk_size /dev/$xda)" ]; then
         fix_gpt_backup_partition_table_by_sgdisk
@@ -4949,24 +4949,24 @@ dd_qcow() {
 }
 
 fix_gpt_backup_partition_table_by_sgdisk() {
-    # 当备份分区表超出实际硬盘容量时，只能用 sgdisk 修复分区表
-    # 应用场景：镜像大小超出硬盘实际硬盘，但缩小分区后不超出实际硬盘容量，可以顺利 DD
-    # 例子 openSUSE-Leap-15.5-Minimal-VM.x86_64-kvm-and-xen.qcow2
+    # when the backup table lies beyond the real disk, only sgdisk can repair the table
+    # scenario: the image is larger than the disk, but fits once the partition is shrunk, so the DD can succeed
+    # example: openSUSE-Leap-15.5-Minimal-VM.x86_64-kvm-and-xen.qcow2
 
-    # parted 无法修复
+    # parted cannot repair it
     # parted /dev/$xda -f -s print
 
-    # fdisk/sfdisk 显示主分区表损坏
+    # fdisk/sfdisk report the primary table as corrupt
     # echo write | sfdisk /dev/$xda
     # GPT PMBR size mismatch (50331647 != 20971519) will be corrected by write.
     # The primary GPT table is corrupt, but the backup appears OK, so that will be used.
 
-    # 除此之外的场景应该用 parted 来修复
+    # every other scenario should be repaired with parted
 
     apk add sgdisk
 
-    # 两种方法都可以，但都不会修复备份分区表的 GUID
-    # 此时 sgdisk -v /dev/vda 会提示主副分区表 guid 不相同
+    # both methods work, but neither repairs the GUID of the backup table
+    # sgdisk -v /dev/vda then warns that the primary and backup table guids differ
     # localhost:~# sgdisk -v /dev/$xda
     # Problem: main header's disk GUID (A24485F3-2C02-43BD-BF4E-F52E42B00DEA) doesn't
     # match the backup GPT header's disk GUID (ADAF57BC-B4F5-4E04-BCBA-BDDCD796C388)
@@ -4979,7 +4979,7 @@ fix_gpt_backup_partition_table_by_sgdisk() {
         sgdisk --move-second-header /dev/$xda
     fi
 
-    # 因此需要运行一次设置 guid
+    # so the guid has to be set once
     if new_guid=$(sgdisk -v /dev/$xda | grep GUID | head -1 | grep -Eo '[0-9A-F-]{36}'); then
         sgdisk --disk-guid $new_guid /dev/$xda
     fi
@@ -4989,7 +4989,7 @@ fix_gpt_backup_partition_table_by_sgdisk() {
     apk del sgdisk
 }
 
-# 适用于 DD 后修复 gpt 备份分区表
+# Used to repair the gpt backup table after a DD
 fix_gpt_backup_partition_table_by_parted() {
     apk add parted
     parted /dev/$xda -f -s print
@@ -4997,19 +4997,19 @@ fix_gpt_backup_partition_table_by_parted() {
 }
 
 resize_after_install_cloud_image() {
-    # 提前扩容
-    # 1 修复 vultr 512m debian 11 generic/genericcloud 首次启动 kernel panic
-    # 2 防止 gentoo 云镜像 websync 时空间不足
+    # Grow it in advance to
+    # 1 fix the kernel panic on first boot of vultr 512m debian 11 generic/genericcloud
+    # 2 stop the gentoo cloud image running out of space during websync
     info "Resize after dd"
     lsblk -f /dev/$xda
 
-    # 打印分区表，并自动修复备份分区表
+    # Print the partition table, repairing the backup table automatically
     fix_gpt_backup_partition_table_by_parted
 
     disk_size=$(get_disk_size /dev/$xda)
     disk_end=$((disk_size - 1))
 
-    # 不能漏掉最后的 _ ，否则第6部分都划到给 last_part_fs
+    # the trailing _ must not be dropped, or the whole sixth field goes to last_part_fs
     IFS=: read -r last_part_num _ last_part_end _ last_part_fs _ \
         < <(parted -msf /dev/$xda 'unit b print' | tail -1)
     last_part_end=$(echo $last_part_end | sed 's/B//')
@@ -5021,7 +5021,7 @@ resize_after_install_cloud_image() {
         mkdir -p /os
 
         # lvm ?
-        # 用 cloud-utils-growpart？
+        # use cloud-utils-growpart?
         case "$last_part_fs" in
         ext4)
             # debian ci
@@ -5069,11 +5069,11 @@ mount_part_basic_layout() {
         os_part_num=1
     fi
 
-    # 挂载系统分区
+    # Mount the system partition
     mkdir -p $os_dir
     mount -t ext4 "/dev/$(xda $os_part_num)" $os_dir
 
-    # 挂载 efi 分区
+    # Mount the efi partition
     if is_efi; then
         mkdir -p $efi_dir
         mount -t vfat -o umask=077 "/dev/$(xda 1)" $efi_dir
@@ -5089,11 +5089,11 @@ mount_part_for_iso_installer() {
         mount_args=
     fi
 
-    # 挂载主分区
+    # Mount the main partition
     mkdir -p /os
     mount $mount_args /dev/disk/by-label/os /os
 
-    # 挂载其他分区
+    # Mount the other partitions
     if is_efi; then
         mkdir -p /os/boot/efi
         mount /dev/disk/by-label/efi /os/boot/efi
@@ -5120,7 +5120,7 @@ create_win_set_netconf_script() {
         get_netconf_to mac_addr
         echo "set mac_addr=$mac_addr" >$target
 
-        # 生成静态 ipv4 配置
+        # Generate the static ipv4 configuration
         if is_staticv4; then
             get_netconf_to ipv4_addr
             get_netconf_to ipv4_gateway
@@ -5131,7 +5131,7 @@ $(get_dns_list_for_win 4)
 EOF
         fi
 
-        # 生成静态 ipv6 配置
+        # Generate the static ipv6 configuration
         if is_staticv6; then
             get_netconf_to ipv6_addr
             get_netconf_to ipv6_gateway
@@ -5141,7 +5141,7 @@ set ipv6_gateway=$ipv6_gateway
 EOF
         fi
 
-        # 有 ipv6 但需设置 dns 的情况
+        # the case where ipv6 exists but dns still needs setting
         if is_need_manual_set_dnsv6; then
             cat <<EOF >>$target
 $(get_dns_list_for_win 6)
@@ -5151,8 +5151,8 @@ EOF
         cat -n $target
     fi
 
-    # 脚本还有关闭ipv6隐私id的功能，所以不能省略
-    # 合并脚本
+    # the script also turns off ipv6 privacy addresses, so it cannot be skipped
+    # Merge the scripts
     wget $confhome/windows-set-netconf.bat -O- >>$target
     unix2dos $target
 }
@@ -5168,23 +5168,23 @@ create_win_change_rdp_port_script() {
     unix2dos $target
 }
 
-# virt-what 要用最新版
-# vultr 1G High Frequency LAX 实际上是 kvm
-# debian 11 virt-what 1.19 显示为 hyperv qemu
-# debian 11 systemd-detect-virt 显示为 microsoft
-# alpine virt-what 1.25 显示为 kvm
-# 所以不要在原系统上判断具体虚拟化环境
+# virt-what must be the latest version
+# vultr 1G High Frequency LAX is really kvm
+# debian 11 virt-what 1.19 reports hyperv qemu
+# debian 11 systemd-detect-virt reports microsoft
+# alpine virt-what 1.25 reports kvm
+# so do not determine the exact virtualization environment on the original system
 
-# lscpu 也可查看虚拟化环境，但 alpine on lightsail 运行结果为 Microsoft
-# 猜测 lscpu 只参考了 cpuid 没参考 dmi
-# virt-what 可能会输出多行结果，因此用 grep
+# lscpu can also show the virtualization environment, but alpine on lightsail reports Microsoft
+# presumably lscpu only consults cpuid and not dmi
+# virt-what may output several lines, hence the grep
 
 get_aws_repo() {
     echo https://s3.amazonaws.com/ec2-windows-drivers-downloads
 }
 
-# 将 AC/SAC 版本号 转换为 LTSC 版本号
-# 用于查找驱动
+# Convert an AC/SAC version number into an LTSC version number
+# used for driver lookup
 get_windows_name_by_version() {
     local nt_ver=$1
     local build_ver=$2
@@ -5245,7 +5245,7 @@ is_nt_ver_ge() {
     [ "$orig" = "$sorted" ]
 }
 
-# reinstall.sh 有同名方法
+# reinstall.sh has a function of the same name
 is_administrator_username() {
     username_in_lower=$(printf "%s" "$1" | to_lower)
 
@@ -5266,11 +5266,11 @@ is_administrator_username() {
 }
 
 get_cloud_vendor() {
-    # busybox blkid 不显示 sr0 的 UUID
+    # busybox blkid does not show the UUID of sr0
     apk add lsblk
 
     # http://git.annexia.org/?p=virt-what.git;a=blob;f=virt-what.in;hb=HEAD
-    # virt-what 可识别厂商 aws google_cloud alibaba_cloud alibaba_cloud-ebm
+    # virt-what can identify the vendor: aws google_cloud alibaba_cloud alibaba_cloud-ebm
     if is_dmi_contains "Amazon EC2" || is_virt_contains aws; then
         echo aws
     elif is_dmi_contains "Google Compute Engine" || is_dmi_contains "GoogleCloud" || is_virt_contains google_cloud; then
@@ -5305,7 +5305,7 @@ mkdir_clear() {
     mkdir -p "$dir"
 }
 
-# 注意使用方法是 list=$(list_add "$list" "$item_to_add")
+# Note the calling convention is list=$(list_add "$list" "$item_to_add")
 list_add() {
     local list=$1
     local item_to_add=$2
@@ -5321,7 +5321,7 @@ is_list_has() {
     echo "$list" | grep -qFx "$item"
 }
 
-# reinstall.sh 有同名方法
+# reinstall.sh has a function of the same name
 get_drivers() {
     (
         cd "$(readlink -f $1)"
@@ -5346,16 +5346,16 @@ get_windows_type_from_windows_drive() {
     product_type=$(hivexget $system_hive '\ControlSet001\Control\ProductOptions' ProductType)
     apk del hivex-perl
 
-    # ProductType InstallationType 都是用来区分客户端和服务器系统
-    # 就驱动而言，用的是 ProductType
+    # ProductType and InstallationType both distinguish client from server systems
+    # for drivers, ProductType is the one used
     # https://learn.microsoft.com/windows-hardware/drivers/install/inf-manufacturer-section
-    # NTamd64.10.0       # 不限制 ProductType
-    # NTamd64.10.0.1     # 只接受 ProductType 为 1 的系统
+    # NTamd64.10.0       # no ProductType restriction
+    # NTamd64.10.0.1     # only accepts systems whose ProductType is 1
 
-    # 实测也是用 ProductType
-    # 在 win11 右键 e1d.inf 安装驱动后，在任务管理器强制为任意网卡选择驱动，列表里面：
-    # win11 enterprise    有   i218-V/i-219V，有 i218-LM/i219-LM
-    # win11 multi-session 没有 i218-V/i-219V，有 i218-LM/i219-LM
+    # testing confirms ProductType is used
+    # after right-clicking e1d.inf to install the driver on win11 and forcing a driver for any NIC in task manager, the list shows:
+    # win11 enterprise    has     i218-V/i-219V, has i218-LM/i219-LM
+    # win11 multi-session has not  i218-V/i-219V, has i218-LM/i219-LM
 
     case "$product_type" in
     WinNT) echo client ;;
@@ -5369,7 +5369,7 @@ get_windows_arch_from_windows_drive() {
 
     apk add hivex-perl
     hive=$(find_file_ignore_case $os_dir/Windows/System32/config/SYSTEM)
-    # 没有 CurrentControlSet
+    # no CurrentControlSet
     hivexget $hive 'ControlSet001\Control\Session Manager\Environment' PROCESSOR_ARCHITECTURE
     apk del hivex-perl
 }
@@ -5380,15 +5380,15 @@ get_intel_download_url() {
 
     local url=https://www.intel.com/content/www/us/en/download/$id.html
 
-    # 将双引号替换成换行符，使每个链接占一行
-    # intel 禁止了 wget 下载网页
+    # Replace the double quotes with newlines so each link is on its own line
+    # intel blocks wget from downloading the page
     wget -U curl/7.54.1 "$url" -O- | sed 's,",\n,g' |
         grep -Eio -m1 "https://.+/$file_regex" | grep .
 }
 
 apk_add_from_edge() {
-    # 从 edge/community 仓库下载新版软件包
-    # 现在用不到
+    # Download the newer package from the edge/community repository
+    # not needed at the moment
     local alpine_mirror
     alpine_mirror=$(grep '^http.*/main$' /etc/apk/repositories | sed 's,/[^/]*/main$,,' | head -1)
     apk add --repository "$alpine_mirror/edge/community" \
@@ -5420,7 +5420,7 @@ install_windows() {
     info "Process windows iso"
     mkdir -p /iso /wim
 
-    # find_file_ignore_case 也在这个文件里面
+    # find_file_ignore_case is in this file too
     # shellcheck disable=SC1090
     . <(wget -O- $confhome/windows-driver-utils.sh)
 
@@ -5435,9 +5435,9 @@ install_windows() {
             error_and_exit "can't find boot.wim"
     )
 
-    # 一般镜像是 install.wim
-    # en_server_install_disc_windows_home_server_2011_x64_dvd_658487.iso 是 Install.wim
-    # en_windows_vista_sp2_with_update_6003.23713_aio_7in1_x64_v26.01.13_by_adguard.iso 是 swm
+    # most images use install.wim
+    # en_server_install_disc_windows_home_server_2011_x64_dvd_658487.iso uses Install.wim
+    # en_windows_vista_sp2_with_update_6003.23713_aio_7in1_x64_v26.01.13_by_adguard.iso uses swm
     source_install_wim=$(
         cd /iso
         {
@@ -5456,7 +5456,7 @@ install_windows() {
         )
     fi
 
-    # 防止用了不兼容架构的 iso
+    # guard against an iso of an incompatible architecture
     boot_index=$(get_wim_prop "/iso/$sources_boot_wim" 'Boot Index')
     arch_wim=$(get_image_prop "/iso/$sources_boot_wim" "$boot_index" 'Architecture' | to_lower)
     if ! {
@@ -5467,7 +5467,7 @@ install_windows() {
         error_and_exit "The machine is $(uname -m), but the iso is $arch_wim."
     fi
 
-    # efi 机器不能安装 32 位 windows
+    # an efi machine cannot install 32-bit windows
     if is_efi && [ "$arch_wim" = x86 ]; then
         error_and_exit "EFI machine can't install 32-bit Windows."
     fi
@@ -5475,8 +5475,8 @@ install_windows() {
     iso_install_wim=/iso/$source_install_wim
     install_wim=/os/installer/$source_install_wim
 
-    # 匹配映像版本
-    # 需要整行匹配，因为要区分 Windows 10 Pro 和 Windows 10 Pro for Workstations
+    # Match the image edition
+    # the whole line must match, to tell Windows 10 Pro from Windows 10 Pro for Workstations
     image_count=$(wiminfo $iso_install_wim | grep "^Image Count:" | cut -d: -f2 | trim)
     all_image_names=$(wiminfo $iso_install_wim | grep ^Name: | sed 's/^Name: *//')
     info "Images Count: $image_count"
@@ -5484,20 +5484,20 @@ install_windows() {
     echo
 
     if [ "$image_count" = 1 ]; then
-        # 只有一个版本就用那个版本
+        # with only one edition, use it
         image_name=$all_image_names
         iso_image_index=1
     else
         while true; do
-            # 匹配成功
-            # 改成正确的大小写
+            # matched
+            # correct the letter case
             if matched_image_name=$(printf '%s\n' "$all_image_names" | grep -Fix "$image_name"); then
                 image_name=$matched_image_name
                 iso_image_index=$(wiminfo "$iso_install_wim" "$image_name" | grep 'Index:' | awk '{print $NF}')
                 break
             fi
 
-            # 匹配失败
+            # no match
             file=/image-name
             error "Invalid image name: $image_name"
             echo "Choose a correct image name by one of follow command in ssh to continue:"
@@ -5505,7 +5505,7 @@ install_windows() {
                 echo "  echo '$line' >$file"
             done < <(echo "$all_image_names")
 
-            # sleep 直到有输入
+            # sleep until there is input
             true >$file
             while ! { [ -s $file ] && image_name=$(cat $file) && [ -n "$image_name" ]; }; do
                 sleep 1
@@ -5517,19 +5517,19 @@ install_windows() {
         get_image_prop "$iso_install_wim" "$iso_image_index" "$1"
     }
 
-    # Windows Server 作为域服务器时，ProductType 会变成 LanmanNT ?
+    # does ProductType become LanmanNT when Windows Server acts as a domain server?
     # https://cloud.tencent.com/developer/article/2465206
     # https://github.com/search?q=InstallationType+Client+Embedded+Server+Core&type=code
     # https://learn.microsoft.com/azure/virtual-desktop/windows-multisession-faq#why-does-my-application-report-windows-enterprise-multi-session-as-a-server-operating-system
 
-    # 信息是从注册表获取，因为某些 install.wim 可能缺少属性
-    # Azure 上能使用 Windows 10/11 Enterprise 多会话
+    # the information comes from the registry, because some install.wim files lack the attributes
+    # Azure offers Windows 10/11 Enterprise multi-session
     # HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\InstallationType
     # HKEY_LOCAL_MACHINE\SYSTEM\ControlSet001\Control\ProductOptions\ProductType
     # HKEY_LOCAL_MACHINE\SYSTEM\ControlSet001\Control\ProductOptions\ProductSuite
 
-    # 系统                                InstallationType    ProductType    ProductSuite
-    # Windows Client (普通 Windows)          Client             WinNT        Terminal Server
+    # system                                InstallationType    ProductType    ProductSuite
+    # Windows Client (ordinary Windows)     Client              WinNT          Terminal Server
     # Windows 10/11 Enterprise 多会话        Client             ServerNT     Terminal Server
     # Windows Server 2012 R2 桌面体验        Server             ServerNT     Terminal Server 和 DataCenter (两行)
     # Windows Server 2012 R2 不带桌面体验    Server Core        ServerNT     Terminal Server 和 DataCenter (两行)

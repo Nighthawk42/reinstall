@@ -5,10 +5,6 @@
 # debian 9 不支持 set -E
 set -e
 
-is_in_china() {
-    grep -q 1 /dev/netconf/*/is_in_china
-}
-
 is_ipv6_only() {
     ! grep -q 1 /dev/netconf/*/ipv4_has_internet
 }
@@ -56,19 +52,14 @@ get_frpc_url() {
             # debian 11 initrd 没有 xargs awk
             # debian 12 initrd 没有 xargs
             # github 不支持 ipv6
-            if is_in_china || is_ipv6_only; then
-                wget -O- https://mirrors.nju.edu.cn/github-release/fatedier/frp/LatestRelease/frp_sha256_checksums.txt |
-                    grep -m1 frp_ | cut -d_ -f2
-            else
-                # https://api.github.com/repos/fatedier/frp/releases/latest 有请求次数限制
+            # https://api.github.com/repos/fatedier/frp/releases/latest 有请求次数限制
 
-                # root@localhost:~# wget --spider -S https://github.com/fatedier/frp/releases/latest 2>&1 | grep Location:
-                #   Location: https://github.com/fatedier/frp/releases/tag/v0.62.0
-                # Location: https://github.com/fatedier/frp/releases/tag/v0.62.0 [following]  # 原版 wget 多了这行
+            # root@localhost:~# wget --spider -S https://github.com/fatedier/frp/releases/latest 2>&1 | grep Location:
+            #   Location: https://github.com/fatedier/frp/releases/tag/v0.62.0
+            # Location: https://github.com/fatedier/frp/releases/tag/v0.62.0 [following]  # 原版 wget 多了这行
 
-                wget --spider -S https://github.com/fatedier/frp/releases/latest 2>&1 |
-                    grep -m1 '^  Location:' | sed 's,.*/tag/v,,'
-            fi
+            wget --spider -S https://github.com/fatedier/frp/releases/latest 2>&1 |
+                grep -m1 '^  Location:' | sed 's,.*/tag/v,,'
         fi
     )
 
@@ -85,27 +76,13 @@ get_frpc_url() {
     )
 
     mirror=$(
-        # nju 没有 win7 用的旧版
-        # github 不支持 ipv6
-        # daocloud 加速不支持 ipv6
-        # jsdelivr 不支持 github releases 文件
+        # github.com has no IPv6; the only IPv6-capable frp release
+        # mirrors were China-only, so IPv6-only hosts are unsupported
         if is_ipv6_only; then
-            if is_need_old_version; then
-                echo 'NOT_SUPPORT' >&2
-                return 1
-            else
-                echo https://mirrors.nju.edu.cn/github-release/fatedier/frp
-            fi
+            echo 'NOT_SUPPORT' >&2
+            return 1
         else
-            if is_in_china; then
-                if is_need_old_version; then
-                    echo https://files.m.daocloud.io/github.com/fatedier/frp/releases/download
-                else
-                    echo https://mirrors.nju.edu.cn/github-release/fatedier/frp
-                fi
-            else
-                echo https://github.com/fatedier/frp/releases/download
-            fi
+            echo https://github.com/fatedier/frp/releases/download
         fi
     )
 

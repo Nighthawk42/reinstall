@@ -3,8 +3,6 @@ mode con cp select=437 >nul
 setlocal EnableDelayedExpansion
 
 set confhome=https://raw.githubusercontent.com/bin456789/reinstall/main
-set confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/main
-rem set confhome_cn=https://www.ghproxy.cc/https://raw.githubusercontent.com/bin456789/reinstall/main
 
 set pkgs=curl,cpio,p7zip,dos2unix,jq,xz,gzip,zstd,openssl,bind-utils,libiconv,binutils
 set cmds=curl,cpio,p7zip,dos2unix,jq,xz,gzip,zstd,openssl,nslookup,iconv,ar
@@ -34,38 +32,9 @@ rem if not exist %tmp% (
 rem     md %tmp%
 rem )
 
-rem 下载 geoip
-if not exist geoip (
-    rem www.cloudflare.com/dash.cloudflare.com 国内访问的是美国服务器，而且部分地区被墙
-    call :download http://www.qualcomm.cn/cdn-cgi/trace %~dp0geoip || goto :download_failed
-)
-
-rem 判断是否有 loc=
-findstr /c:"loc=" geoip >nul
-if errorlevel 1 (
-    echo Invalid geoip file
-    del geoip
-    exit /b 1
-)
-
-rem 检查是否国内
-findstr /c:"loc=CN" geoip >nul
-if not errorlevel 1 (
-    rem mirrors.tuna.tsinghua.edu.cn 会强制跳转 https
-    set mirror=http://mirror.nju.edu.cn
-    if defined confhome_cn (
-        set confhome=!confhome_cn!
-    ) else if defined github_proxy (
-        echo !confhome! | findstr /c:"://raw.githubusercontent.com/" >nul
-        if not errorlevel 1 (
-            set confhome=!confhome:http://=https://!
-            set confhome=!confhome:https://raw.githubusercontent.com=%github_proxy%!
-        )
-    )
-) else (
-    rem 服务器在美国 equinix 机房，不是 cdn
-    set mirror=http://mirrors.kernel.org
-)
+rem Cygwin package mirror
+rem Server is in an Equinix facility in the US, not a CDN
+set mirror=http://mirrors.kernel.org
 
 call :check_cygwin_installed || (
     rem win10 arm 支持运行 x86 软件
@@ -131,14 +100,6 @@ call :check_cygwin_installed || (
         set dir=/sourceware/cygwin
     )
 
-    rem daocloud 加速有 90 天缓存，且不支持 IPv6
-    rem https://github.com/DaoCloud/public-binary-files-mirror
-    rem 无法用查询字符串强制刷新缓存
-    rem https://files.m.daocloud.io/www.cloudflare.com/cdn-cgi/trace?a=1
-    rem https://files.m.daocloud.io/www.cloudflare.com/cdn-cgi/trace?b=2
-    rem 也就无法用 https://www.cygwin.com/setup-x86_64.exe?xxx=20250101 强制每天刷新缓存
-
-    rem 下载 Cygwin
     if not exist setup-!CygwinArch!.exe (
         call :download http://www.cygwin.com/setup-!CygwinArch!.exe %~dp0setup-!CygwinArch!.exe || goto :download_failed
     )

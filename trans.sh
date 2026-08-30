@@ -270,7 +270,6 @@ download_via_browser() {
         npm install \
         --no-save --no-package-lock \
         --prefix "/work" \
-        $(is_in_china && echo '--registry=https://registry.npmmirror.com') \
         playwright
 
     # 下载文件
@@ -286,7 +285,6 @@ download_via_browser() {
 download() {
     local url=$1
     local path=$2
-    local can_use_cn_mirror=${3:-false}
 
     # 有ipv4地址无ipv4网关的情况下，aria2可能会用ipv4下载，而不是ipv6
     # axel 在 lightsail 上会占用大量cpu
@@ -331,10 +329,7 @@ download() {
         -O "1=$(basename "$path")" \
         -U curl/7.54.1
 
-    if ! aria2c "$url" "$@" &&
-        ! { $can_use_cn_mirror && is_in_china && is_any_ipv4_has_internet &&
-            url_cn=https://files.m.daocloud.io/$(echo "$url" | sed -E 's,^https?://,,i') &&
-            aria2c "$url_cn" "$@"; }; then
+    if ! aria2c "$url" "$@"; then
         error_and_exit "Failed to download $url"
     fi
 
@@ -756,10 +751,6 @@ get_netconf_to() {
 
 is_any_ipv4_has_internet() {
     grep -q 1 /dev/netconf/*/ipv4_has_internet
-}
-
-is_in_china() {
-    grep -q 1 /dev/netconf/*/is_in_china
 }
 
 # 有 dhcpv4 不等于有网关，例如 vultr 纯 ipv6
@@ -3150,16 +3141,6 @@ EOF
             else
                 echo "deb http://$deb_mirror $codename $comps" >$os_dir/etc/apt/sources.list
             fi
-        else
-            # non-ELTS
-            if is_in_china; then
-                # 不处理 security 源 security.debian.org/debian-security 和 /etc/apt/mirrors/debian-security.list
-                for file in $os_dir/etc/apt/mirrors/debian.list $os_dir/etc/apt/sources.list; do
-                    if [ -f "$file" ]; then
-                        sed -i "s|deb\.debian\.org/debian|$deb_mirror|" "$file"
-                    fi
-                done
-            fi
         fi
 
         # 标记所有内核为自动安装
@@ -4224,11 +4205,7 @@ install_qcow_by_copy() {
             # centos 7 eol 换源
             if [ -f /os/etc/yum.repos.d/CentOS-Base.repo ]; then
                 # 保持默认的 http 因为自带的 ssl 证书可能过期
-                if is_in_china; then
-                    mirror=mirror.nju.edu.cn/centos-vault
-                else
-                    mirror=vault.centos.org
-                fi
+                mirror=vault.centos.org
                 sed -Ei -e 's,(mirrorlist=),#\1,' \
                     -e "s,#(baseurl=http://)mirror.centos.org,\1$mirror," /os/etc/yum.repos.d/CentOS-Base.repo
             fi
@@ -4481,18 +4458,6 @@ EOF
         echo 'GRUB_DISABLE_OS_PROBER=true' >>$os_dir/etc/default/grub
 
         # 更改源
-        if is_in_china; then
-            # 22.04 使用 /etc/apt/sources.list
-            # 24.04 使用 /etc/apt/sources.list.d/ubuntu.sources
-            for file in $os_dir/etc/apt/sources.list $os_dir/etc/apt/sources.list.d/ubuntu.sources; do
-                if [ -f $file ]; then
-                    # cn.archive.ubuntu.com 不在国内还严重丢包
-                    # https://www.itdog.cn/ping/cn.archive.ubuntu.com
-                    sed -i 's/archive.ubuntu.com/mirror.nju.edu.cn/' $file # x64
-                    sed -i 's/ports.ubuntu.com/mirror.nju.edu.cn/' $file   # arm
-                fi
-            done
-        fi
 
         # 避免 do-release-upgrade 时自动执行 dpkg-reconfigure grub-xx 但是 efi/biosgrub 分区不存在而导致报错
         # shellcheck disable=SC2046
@@ -5219,11 +5184,7 @@ create_win_change_rdp_port_script() {
 # virt-what 可能会输出多行结果，因此用 grep
 
 get_aws_repo() {
-    if is_in_china >&2; then
-        echo https://s3.cn-north-1.amazonaws.com.cn/ec2-windows-drivers-downloads-cn
-    else
-        echo https://s3.amazonaws.com/ec2-windows-drivers-downloads
-    fi
+    echo https://s3.amazonaws.com/ec2-windows-drivers-downloads
 }
 
 # 将 AC/SAC 版本号 转换为 LTSC 版本号
@@ -5421,11 +5382,7 @@ get_intel_download_url() {
     local id=$1
     local file_regex=$2
 
-    if is_in_china; then
-        local url=https://www.intel.cn/content/www/cn/zh/download/$id.html
-    else
-        local url=https://www.intel.com/content/www/us/en/download/$id.html
-    fi
+    local url=https://www.intel.com/content/www/us/en/download/$id.html
 
     # 将双引号替换成换行符，使每个链接占一行
     # intel 禁止了 wget 下载网页
@@ -6398,10 +6355,7 @@ EOF
             # https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/CHECKSUM
             # 路径是文件，应该不会弹出 anubis 验证？
             if ! dir=$(get_latest_virtio_dir "$baseurl"); then
-                mirror_baseurl=https://files.m.daocloud.io/$(echo "$baseurl" | sed -E 's,^https?://,,i')
-                if is_any_ipv4_has_internet && dir=$(get_latest_virtio_dir "$mirror_baseurl"); then
-                    baseurl=$mirror_baseurl
-                elif [ "$arch_wim" = x86 ] || [ "$arch_wim" = x86_64 ]; then
+                if [ "$arch_wim" = x86 ] || [ "$arch_wim" = x86_64 ]; then
                     add_driver_virtio_from_rpm "$@"
                     return
                 else
@@ -6412,12 +6366,6 @@ EOF
             ;;
         esac
 
-        # 如果 dir 包含数字，则是从具体版本号文件夹下载，文件不会更新，可以使用国内镜像
-        if [[ "$dir" =~ [0-9] ]]; then
-            local can_use_cn_mirror=true
-        else
-            local can_use_cn_mirror=false
-        fi
 
         # vista|w7|2k8|2k8R2|arm64 要从 iso 获取驱动
         if [ "$nt_ver" = 6.0 ] || [ "$nt_ver" = 6.1 ] || [ "$arch_wim" = arm64 ]; then
@@ -6427,7 +6375,7 @@ EOF
         fi
 
         if [ "$virtio_source" = iso ]; then
-            download $baseurl/$dir/virtio-win.iso $drv/virtio.iso $can_use_cn_mirror
+            download $baseurl/$dir/virtio-win.iso $drv/virtio.iso
             mkdir -p $drv/virtio
             mount -o ro $drv/virtio.iso $drv/virtio
 
@@ -6440,7 +6388,7 @@ EOF
             fi
         else
             apk add 7zip file
-            download $baseurl/$dir/virtio-win-gt-$arch_xdd.msi $drv/virtio.msi $can_use_cn_mirror
+            download $baseurl/$dir/virtio-win-gt-$arch_xdd.msi $drv/virtio.msi
             match="FILE_*_${virtio_sys}_${arch}*"
             7z x $drv/virtio.msi -o$drv/virtio -i!$match -y -bb1
             (
@@ -6493,7 +6441,7 @@ EOF
         # https://mirrors.tencent.com/install/cts/windows/Drivers.zip
 
         apk add 7zip
-        download https://mirrors.tencent.com/install/windows/virtio_64_1.0.9.exe $drv/virtio.exe true
+        download https://mirrors.tencent.com/install/windows/virtio_64_1.0.9.exe $drv/virtio.exe
         exclude='$*' # 排除 $PLUGINSDIR
         override=u   # A(u)to rename all
         7z x $drv/virtio.exe -o$drv/qcloud/ -ao$override -x!$exclude
@@ -7135,11 +7083,7 @@ sync_time() {
 
     case "$method" in
     ntp)
-        if is_in_china; then
-            ntp_server=ntp.aliyun.com
-        else
-            ntp_server=pool.ntp.org
-        fi
+        ntp_server=pool.ntp.org
         # -d[d]   Verbose
         # -n      Run in foreground
         # -q      Quit after clock is set

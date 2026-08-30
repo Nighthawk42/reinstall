@@ -1530,10 +1530,8 @@ setos() {
         # https://downloadcontent.opensuse.org    # Germany
         # https://downloadcontentcdn.opensuse.org # fastly cdn
 
-        # many mirrors lack the aarch64 tumbleweed appliances
+        # some mirrors lack the aarch64 tumbleweed appliances, e.g.
         #                 https://download.opensuse.org/ports/aarch64/tumbleweed/appliances/
-        #          https://mirrors.ustc.edu.cn/opensuse/ports/aarch64/tumbleweed/appliances/
-        # https://mirrors.tuna.tsinghua.edu.cn/opensuse/ports/aarch64/tumbleweed/appliances/
 
         mirror=https://downloadcontentcdn.opensuse.org
 

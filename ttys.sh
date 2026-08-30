@@ -1,21 +1,21 @@
 #!/bin/sh
 prefix=$1
 
-# 不要在 windows 上使用，因为不准确
-# 在原系统上使用，也可能不准确？例如安装了 cloud 内核的甲骨文？
+# Do not use on Windows: the result is inaccurate
+# May also be inaccurate on the original system, e.g. Oracle with a cloud kernel?
 
-# 注意 debian initrd 没有 xargs
+# Note: the debian initrd has no xargs
 
-# 最后一个 tty 是主 tty，显示的信息最全
+# The last tty is the primary one and shows the most complete output
 if [ "$(uname -m)" = "aarch64" ]; then
     ttys="ttyS0 ttyAMA0 tty0"
 else
     ttys="ttyS0 tty0"
 fi
 
-# 安装环境下 tty 不一定齐全
-# hytron 有ttyS0 但无法写入
-# 用于 cmdline 引导参数时，明确排除不可写的 tty，避免 getty 反复重启
+# Not all ttys necessarily exist in the install environment
+# hytron has ttyS0 but it is not writable
+# As a cmdline boot parameter, explicitly exclude non-writable ttys so getty does not restart in a loop
 # https://github.com/bin456789/reinstall/issues/620
 
 if [ "$prefix" = "console=" ]; then
@@ -24,9 +24,9 @@ else
     is_for_cmdline=false
 fi
 
-# 用途       条件
-# 安装日志   存在且可写
-# console    存在且可写 或 不存在（因为安装环境下 tty 不一定齐全）
+# Purpose       Condition
+# Install log   Exists and is writable
+# console       Exists and is writable, or absent (not all ttys exist in the install environment)
 
 is_first=true
 for tty in $ttys; do

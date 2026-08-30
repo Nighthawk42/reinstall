@@ -1,8 +1,8 @@
 #!/bin/ash
 # shellcheck shell=dash
-# trans.sh/debian.cfg 共用此脚本
+# Shared by trans.sh and debian.cfg
 
-# debian 9 不支持 set -E
+# debian 9 does not support set -E
 set -e
 
 is_ipv6_only() {
@@ -10,19 +10,19 @@ is_ipv6_only() {
 }
 
 get_frpc_url() {
-    # 传入 windows 或者 linux
+    # Pass either windows or linux
     local os_type=$1
     local nt_ver=$2
     local os_bit=${3:-64}
 
     get_old_version() {
-        # 脚本不支持安装 32 位 linux 系统，因此不用管
+        # This script cannot install 32-bit Linux, so ignore that case
         if [ "$os_type" = windows ]; then
-            # 最早支持 toml 的版本是 0.52.0
+            # 0.52.0 is the first version supporting toml
 
-            # 最后支持 vista 的版本是 0.29.0
-            # 最后支持 32 位的版本是 0.51.3
-            # 最后支持 win7 的版本是 0.54.0
+            # 0.29.0 is the last version supporting vista
+            # 0.51.3 is the last version supporting 32-bit
+            # 0.54.0 is the last version supporting win7
             case "$os_bit" in
             32)
                 case "$nt_ver" in
@@ -34,7 +34,7 @@ get_frpc_url() {
                 case "$nt_ver" in
                 6.0) echo 0.29.0 ;; # vista
                 6.1) echo 0.54.0 ;; # win7
-                # 目前最新版本 v0.66.0 依然可以在 win8 上运行
+                # The current v0.66.0 still runs on win8
                 esac
                 ;;
             esac
@@ -49,14 +49,14 @@ get_frpc_url() {
         if is_need_old_version; then
             get_old_version
         else
-            # debian 11 initrd 没有 xargs awk
-            # debian 12 initrd 没有 xargs
-            # github 不支持 ipv6
-            # https://api.github.com/repos/fatedier/frp/releases/latest 有请求次数限制
+            # the debian 11 initrd has no xargs or awk
+            # the debian 12 initrd has no xargs
+            # github has no IPv6
+            # https://api.github.com/repos/fatedier/frp/releases/latest is rate limited
 
             # root@localhost:~# wget --spider -S https://github.com/fatedier/frp/releases/latest 2>&1 | grep Location:
             #   Location: https://github.com/fatedier/frp/releases/tag/v0.62.0
-            # Location: https://github.com/fatedier/frp/releases/tag/v0.62.0 [following]  # 原版 wget 多了这行
+                # Location: https://github.com/fatedier/frp/releases/tag/v0.62.0 [following]  # upstream wget prints this extra line
 
             wget --spider -S https://github.com/fatedier/frp/releases/latest 2>&1 |
                 grep -m1 '^  Location:' | sed 's,.*/tag/v,,'

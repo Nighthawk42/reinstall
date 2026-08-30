@@ -1,4 +1,4 @@
-name: 运行主程序
+name: Run main script
 on:
   workflow_dispatch:
   push:
@@ -6,7 +6,7 @@ on:
       - "reinstall.*"
 jobs:
   run:
-    name: 运行主程序
+    name: Run main script
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -41,7 +41,7 @@ jobs:
 
           ${{ matrix.command }} reset
 
-          # 测试失败例子
+          # Failure test cases
           # ${{ matrix.command }} wrong-os
           # ${{ matrix.command }} dd --img=https://github.com/
           # ${{ matrix.command }} windows --iso=https://github.com/ --image-name=abc

@@ -66,11 +66,11 @@
         const scrollToBottomButton = document.getElementById('scroll-to-bottom');
         let shouldScrollToBottom = true;
 
-        // 缓冲区相关
+        // Buffering
         let messageBuffer = [];
         let flushScheduled = false;
-        const BUFFER_FLUSH_INTERVAL = 100; // 毫秒
-        const BUFFER_MAX_SIZE = 50; // 最大缓冲消息数
+        const BUFFER_FLUSH_INTERVAL = 100; // milliseconds
+        const BUFFER_MAX_SIZE = 50; // max buffered messages
 
         scrollToBottomButton.addEventListener('click', () => {
             logContainer.scrollTop = logContainer.scrollHeight;
@@ -87,18 +87,18 @@
             shouldScrollToBottom = isAtBottom;
         });
 
-        // 刷新缓冲区到 DOM
+        // Flush the buffer into the DOM
         function flushBuffer() {
             if (messageBuffer.length === 0) {
                 flushScheduled = false;
                 return;
             }
 
-            // 批量更新文本内容
+            // Update the text content in one batch
             const batchText = messageBuffer.join('\n');
             logContainer.textContent += '\n' + batchText;
 
-            // 检查状态变化（优先级：error > done > start）
+            // Check for a status change (priority: error > done > start)
             if (batchText.includes('***** ERROR *****')) {
                 document.body.className = 'error';
             } else if (batchText.includes('***** DONE *****')) {
@@ -107,17 +107,17 @@
                 document.body.className = '';
             }
 
-            // 自动滚动
+            // Auto-scroll
             if (shouldScrollToBottom) {
                 logContainer.scrollTop = logContainer.scrollHeight;
             }
 
-            // 清空缓冲区
+            // Clear the buffer
             messageBuffer = [];
             flushScheduled = false;
         }
 
-        // 调度刷新
+        // Schedule a flush
         function scheduleFlush() {
             if (!flushScheduled) {
                 flushScheduled = true;
@@ -127,14 +127,14 @@
             }
         }
 
-        // 添加消息到缓冲区
+        // Append a message to the buffer
         function bufferMessage(message) {
             messageBuffer.push(message);
 
-            // 如果缓冲区满了，立即刷新
+            // If the buffer is full, flush right away
             if (messageBuffer.length >= BUFFER_MAX_SIZE) {
                 if (flushScheduled) {
-                    // 取消之前的调度，立即刷新
+                    // Cancel the pending flush and do it now
                     flushScheduled = false;
                 }
                 flushBuffer();

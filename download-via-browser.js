@@ -26,11 +26,11 @@ if (!targetUrl || !savePath) {
         });
 
         const context = await browser.newContext({
-            // 实测不需要
+            // Not needed in practice
             // userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         });
 
-        // 参考文档
+        // Reference docs
         // https://playwright.dev/docs/downloads
         // https://playwright.dev/docs/api/class-download
 
@@ -40,7 +40,7 @@ if (!targetUrl || !savePath) {
         });
 
         await page.goto(targetUrl, { waitUntil: "commit" }).catch((e) => {
-            // 下载直链会触发 'Download is starting' 异常，要手动忽略
+            // A direct download link throws 'Download is starting'; ignore it
             // https://github.com/microsoft/playwright/blob/v1.60.0/tests/library/download.spec.ts#L68
             if (!e.message.includes("Download is starting")) {
                 throw e;

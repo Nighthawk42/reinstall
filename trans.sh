@@ -5786,7 +5786,7 @@ install_windows() {
         ;;
     arm64)
         arch=arm64
-        arch_xdd= # xen 没有 arm64 驱动，# xen has no arm64 driver, and virtio has no arm64 msi either
+        arch_xdd= # xen has no arm64 driver, and virtio has no arm64 msi either
         arch_dd=  # huawei cloud has no arm64 driver
         ;;
     esac
@@ -6262,7 +6262,6 @@ EOF
         # 3. 2022/4/14 some files downgraded, equivalent to the 217~latest isos
 
         # could this download the win7 173(sha1) and 176(sha256) bundles straight from a github commit?
-        # 国内可使用 jsdelivr 加速 github
 
         # 2k12
         # https://github.com/virtio-win/virtio-win-pkg-scripts/issues/61
@@ -6342,14 +6341,14 @@ EOF
             dir=archive-virtio/virtio-win-0.1.173-9 ;;        # vista|w7|2k8|2k8R2
         6.2 | 6.3) dir=archive-virtio/virtio-win-0.1.215-2 ;; # w8|w8.1|2k12|2k12R2
         *)
-            # 先获取最新版本号，再下载
-            # 用 stable-virtio 的话国内镜像下载的可能是缓存的旧版
+            # get the latest version number first, then download
+            # with stable-virtio a mirror may serve a cached older build
 
             # https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/
-            # 路径是网页，可能会弹出 anubis 验证
+            # this path is a web page and may trigger an anubis challenge
 
             # https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/CHECKSUM
-            # 路径是文件，应该不会弹出 anubis 验证？
+            # this path is a file and should not trigger an anubis challenge?
             if ! dir=$(get_latest_virtio_dir "$baseurl"); then
                 if [ "$arch_wim" = x86 ] || [ "$arch_wim" = x86_64 ]; then
                     add_driver_virtio_from_rpm "$@"
@@ -6363,7 +6362,7 @@ EOF
         esac
 
 
-        # vista|w7|2k8|2k8R2|arm64 要从 iso 获取驱动
+            # vista|w7|2k8|2k8R2|arm64 must take the driver from the iso
         if [ "$nt_ver" = 6.0 ] || [ "$nt_ver" = 6.1 ] || [ "$arch_wim" = arm64 ]; then
             virtio_source=iso
         else
@@ -6375,8 +6374,8 @@ EOF
             mkdir -p $drv/virtio
             mount -o ro $drv/virtio.iso $drv/virtio
 
-            # vista 如果安装气动驱动，会报错 windows could not configure one or more system components
-            # 2008 安装的气球驱动不能用，需要到硬件管理器重新安装设备才能用，无需更新驱动
+                # installing the balloon driver on vista errors with: windows could not configure one or more system components
+                # the balloon driver installed on 2008 does not work until the device is reinstalled in device manager; no driver update is needed
             if [ "$product_ver" = vista ]; then
                 cp_drivers $drv/virtio -ipath "*/$virtio_sys/$arch/*" "$@" -not -ipath "*/balloon/*"
             else
@@ -6390,7 +6389,7 @@ EOF
             (
                 cd $drv/virtio
 
-                # 为没有后缀名的文件添加后缀名
+                # give the extension-less files an extension
                 echo "Recognizing file extension..."
                 for file in *"${virtio_sys}_${arch}"; do
                     recognized=false
@@ -6407,17 +6406,17 @@ EOF
                         fi
                     done
 
-                    # 如果识别不了后缀名，就删除此文件
-                    # 因为用不了，免得占用空间
+                    # if the extension cannot be determined, delete the file,
+                    # since it is unusable and only takes up space
                     if ! $recognized; then
                         rm -fv "$file"
                     fi
                 done
 
-                # 将
+                # rename
                 # FILE_netkvm_netkvmco_w8.1_amd64.dll
                 # FILE_netkvm_w8.1_amd64.cat
-                # 改名为
+                # to
                 # netkvmco.dll
                 # netkvm.cat
                 echo "Renaming files..."
@@ -6433,12 +6432,12 @@ EOF
     add_driver_qcloud_virtio() {
         info "Add drivers: QCloud virtio"
 
-        # 测试版?
+        # a beta build?
         # https://mirrors.tencent.com/install/cts/windows/Drivers.zip
 
         apk add 7zip
         download https://mirrors.tencent.com/install/windows/virtio_64_1.0.9.exe $drv/virtio.exe
-        exclude='$*' # 排除 $PLUGINSDIR
+        exclude='$*' # exclude $PLUGINSDIR
         override=u   # A(u)to rename all
         7z x $drv/virtio.exe -o$drv/qcloud/ -ao$override -x!$exclude
 
@@ -6481,12 +6480,12 @@ EOF
             case "$(echo "$product_ver" | to_lower)" in
             vista) echo Vista2008 ;;
             7) echo 7 ;;
-            8) [ "$arch_wim" = x86 ] && echo 7 || echo 2012 ;;      # 没有 win8 32/64
-            8.1) [ "$arch_wim" = x86 ] && echo 7 || echo 2012_R2 ;; # 没有 win8.1 32/64
+            8) [ "$arch_wim" = x86 ] && echo 7 || echo 2012 ;;      # there is no win8 32/64
+            8.1) [ "$arch_wim" = x86 ] && echo 7 || echo 2012_R2 ;; # there is no win8.1 32/64
             10 | 11) echo 10 ;;
             2008) echo Vista2008 ;;
             '2008 r2') echo 2008_R2 ;;
-            2012) [ "$arch_wim" = x86 ] && echo 2008_R2 || echo 2012 ;; # 没有 2012 32
+            2012) [ "$arch_wim" = x86 ] && echo 2008_R2 || echo 2012 ;; # there is no 2012 32
             '2012 r2') echo 2012_R2 ;;
             2016 | 2019 | 202*) echo 2016 ;;
             esac
@@ -6506,7 +6505,7 @@ EOF
         aliyun_sys=$(
             case "$nt_ver" in
             6.1) echo 2008R2 ;;
-            6.2 | 6.3) echo 2012R2 ;; # 实际上是 2012 的驱动
+            6.2 | 6.3) echo 2012R2 ;; # really the 2012 driver
             *) echo 2016 ;;
             esac
         )
@@ -6530,14 +6529,14 @@ EOF
     }
 
     # gcp virtio win7 x64 sha1
-    # 缺 balloon viorng
+    # missing balloon and viorng
     add_driver_gcp_virtio_win6_1_sha1_x64() {
         info "Add drivers: GCP virtio win6.1 sha1 x64"
 
-        # 用到 nvme 时才下载 nvme 驱动
-        # 因为 win7 可以通过更新获得 nvme 驱动
-        # 而且谷歌推荐使用微软 nvme 驱动
-        # (google-compute-engine-driver-nvme 2.0.0 更新内容是删除谷歌 nvme 驱动)
+        # only download the nvme driver when nvme is in use,
+        # because win7 can obtain an nvme driver through Windows Update
+        # and google recommends the microsoft nvme driver
+        # (google-compute-engine-driver-nvme 2.0.0 removed the google nvme driver)
         mkdir -p $drv/gce/win6.1sha1
         for file in \
             WdfCoInstaller01009.dll WdfCoInstaller01011.dll \
@@ -6551,11 +6550,11 @@ EOF
     }
 
     # gcp virtio win7+ sha256
-    # x86 缺 viorng pvpanic
-    # x64 缺 viorng
+    # x86 is missing viorng and pvpanic
+    # x64 is missing viorng
     # https://github.com/GoogleCloudPlatform/compute-image-tools/tree/master/daisy_workflows/image_build/windows
-    # 官方是从 https://console.cloud.google.com/storage/browser/gce-windows-drivers-public 下载驱动，安装系统后再 googet 更新驱动
-    # 我们一步到位从 googet 下载驱动
+    # officially the drivers come from https://console.cloud.google.com/storage/browser/gce-windows-drivers-public and are updated with googet after install
+    # we download them from googet directly instead
     add_driver_gcp_virtio() {
         info "Add drivers: GCP virtio"
 
@@ -6563,7 +6562,7 @@ EOF
         gce_repo=https://packages.cloud.google.com/yuck
         download $gce_repo/repos/google-compute-engine-stable/index $drv/gce/gce.json
         for part in balloon netkvm pvpanic vioscsi; do
-            # gcp 提供的 pvpanic 没有 x86 驱动
+            # the pvpanic gcp provides has no x86 driver
             if [ "$part" = pvpanic ] && [ "$arch_wim" = x86 ]; then
                 continue
             fi
@@ -6578,20 +6577,20 @@ EOF
     }
 
     # gcp
-    # x86 x86_64 arm64 都有
-    # win7 驱动是 sha256 签名
+    # available for x86, x86_64 and arm64
+    # the win7 driver is sha256 signed
     add_driver_gcp() {
         info "Add drivers: GCP"
 
         # https://packages.cloud.google.com/yuck/repos/google-compute-engine-stable/index
         # https://packages.cloud.google.com/yuck/repos/google-compute-engine-driver-gvnic-gq-stable/index
-        # 官方镜像的 gvnic 是从 gvnic-gq-stable 获取的，版本低一点，但更稳定?
+        # the gvnic in the official image comes from gvnic-gq-stable: slightly older, but more stable?
 
         mkdir -p $drv/gce
         gce_repo=https://packages.cloud.google.com/yuck
         download $gce_repo/repos/google-compute-engine-stable/index $drv/gce/gce.json
         for part in gvnic gga; do
-            # gvnic 没有 arm64
+            # gvnic has no arm64 build
             if [ "$part" = gvnic ] && [ "$arch_wim" = arm64 ]; then
                 continue
             fi
@@ -6600,8 +6599,8 @@ EOF
             link=$(grep -o "/pool/.*-google-compute-engine-driver-$part.*\.goo" $drv/gce/gce.json)
             wget $gce_repo$link -O- | tar xz -C $drv/gce/$part
 
-            # inf 不限版本
-            # 但 win7 gvnic ndis 版本是 6.2，vista/2008 能装但用不了
+            # the inf has no version restriction,
+            # but the win7 gvnic ndis version is 6.2, so vista/2008 installs it without it working
             # https://github.com/GoogleCloudPlatform/compute-virtual-ethernet-windows/blob/cad1edf7a05465f4972a81f2c015952fd228b5e3/src/gvnic.vcxproj#L298
             if false; then
                 for suffix in '' '-32'; do
@@ -6639,11 +6638,11 @@ EOF
 
         mount_iso_install_wim_to /wim-tmp
 
-        # 检查 install.wim 镜像是否有 vpci 驱动
+        # Check whether the install.wim image has the vpci driver
         if vpci_sys=$(find_file_ignore_case /wim-tmp/Windows/System32/drivers/vpci.sys) &&
             wvpci_inf=$(find_file_ignore_case /wim-tmp/Windows/INF/wvpci.inf); then
 
-            # 注册表文件
+            # registry file
             from_system_hive="$(find_file_ignore_case /wim-tmp/Windows/System32/config/SYSTEM)"
             from_software_hive="$(find_file_ignore_case /wim-tmp/Windows/System32/config/SOFTWARE)"
             to_system_hive="$(find_file_ignore_case /wim/Windows/System32/config/SYSTEM)"
@@ -6651,8 +6650,8 @@ EOF
 
             apk add hivex-perl
 
-            # 获取当前生效的 wvpci.inf 文件
-            # 得到 wvpci.inf_amd64_86afbe8940682d27 这样的文件名
+            # get the wvpci.inf file currently in effect,
+            # which gives a filename such as wvpci.inf_amd64_86afbe8940682d27
             wvpci_inf_filename_with_hash=$(hivexget "$from_system_hive" 'DriverDatabase\DriverInfFiles\wvpci.inf' Active)
 
             # .inf .sys
@@ -6682,7 +6681,7 @@ EOF
             hivexregedit --merge "$to_software_hive" "$reg"
 
             # SYSTEM
-            # 理论上要从 HKEY_LOCAL_MACHINE\SYSTEM\Select 的 Current/Default 获取 ControlSet 序号
+            # strictly the ControlSet number should come from Current/Default under HKEY_LOCAL_MACHINE\SYSTEM\Select
             reg=$drv/vpci/system.reg
             for key in \
                 "ControlSet001\Services\EventLog\System\vpci" \
@@ -6692,9 +6691,9 @@ EOF
                 "DriverDatabase\DriverPackages\\$wvpci_inf_filename_with_hash"; do
                 hivexregedit --export "$from_system_hive" "$key" >>"$reg"
             done
-            # 这个注册表位置用 Tag 记录着驱动加载的顺序
-            # HKEY_LOCAL_MACHINE\System\ControlSet001\Control\GroupOrderList 的 System Bus Extender
-            # 因此要删除 vpci 的 tag，避免 tag 跟其他驱动重复，而导致错误
+            # this registry location records the driver load order in Tag
+            # HKEY_LOCAL_MACHINE\System\ControlSet001\Control\GroupOrderList, System Bus Extender
+            # so the vpci tag must be removed, or it would clash with another driver and break things
             cat <<EOF >>"$reg"
 [\ControlSet001\Services\vpci]
 "Tag"=-
@@ -6747,7 +6746,7 @@ EOF
             local url
             url=$(get_intel_download_url "$id" "SetupRST\.exe")
 
-            # 注意 intel 禁止了 aria2 下载
+            # note that intel blocks aria2 downloads
             download_via_browser $url $drv/SetupRST.exe
             apk add 7zip
             7z x $drv/SetupRST.exe -o$drv/SetupRST -i!.text
@@ -6755,35 +6754,35 @@ EOF
             apk del 7zip
             cp_drivers $drv/vmd
         else
-            # 如果开启了 vmd 但硬盘不在 vmd 上，linux 会自动加载 vmd 模块?
-            # 还要判断主硬盘是否在 vmd 上，如果不在，即使没有 vmd 驱动也可继续安装
-            # 因此目前先不中止脚本
+            # if vmd is enabled but the disk is not behind it, does linux load the vmd module automatically?
+            # whether the main disk is behind vmd should also be checked: if it is not, the install can proceed without a vmd driver
+            # so do not abort the script for now
             : error_and_exit "can't find suitable vmd driver"
         fi
     }
 
-    # 脚本自动检测驱动可能有问题
-    # 假设是 win7 时代的网卡，官网没有 win10 驱动，系统也不自带
-    # 但实际上 win10 可以用 win7 的驱动
-    # 这种情况即使脚本自动下载 win10 的驱动包，也不会包含这个驱动
-    # 应该下载 win7 的驱动
-    # 因此只能交给用户自己添加驱动
+    # Automatic driver detection can get this wrong.
+    # Consider a win7-era NIC: the vendor ships no win10 driver and the system has none built in,
+    # but win10 can in fact use the win7 driver.
+    # In that case downloading the win10 driver package automatically will not include it;
+    # the win7 package is the one needed.
+    # So this is left to the user to add manually.
 
     add_driver_custom() {
         if [ -d /custom_drivers/ ]; then
             cp_drivers custom /custom_drivers/
-            # 复制后不删除，因为脚本可能再次运行
+            # do not delete after copying, since the script may run again
         fi
     }
 
-    # 修改应答文件
+    # Edit the answer file
     apk add xmlstarlet
     download $confhome/windows.xml /tmp/autounattend.xml
     locale=$(get_selected_image_prop 'Default Language')
     use_default_rdp_port=$(is_need_change_rdp_port && echo false || echo true)
 
-    # 7601.24214.180801-1700.win7sp1_ldr_escrow_CLIENT_ULTIMATE_x64FRE_en-us.iso Image Name 为空
-    # 将 xml Image Name 的值设为空可以正常安装
+    # 7601.24214.180801-1700.win7sp1_ldr_escrow_CLIENT_ULTIMATE_x64FRE_en-us.iso has an empty Image Name
+    # setting the xml Image Name value to empty installs correctly
     sed -i \
         -e "s|%arch%|$arch|" \
         -e "s|%image_name%|$image_name|" \
@@ -6791,7 +6790,7 @@ EOF
         -e "s|%use_default_rdp_port%|$use_default_rdp_port|" \
         /tmp/autounattend.xml
 
-    # 账号密码
+    # Account and password
     if is_administrator_username "$username"; then
         # Administrator
         password_base64=$(get_password_windows_administrator_base64)
@@ -6803,7 +6802,7 @@ EOF
             -e "s|%administrator_password%|$password_base64|gi" \
             /tmp/autounattend.xml
     else
-        # 普通账号
+        # a normal account
         password_base64=$(get_password_windows_user_base64)
         xmlstarlet ed -L -N x="urn:schemas-microsoft-com:unattend" \
             -d "//x:AdministratorPassword" \
@@ -6815,46 +6814,46 @@ EOF
             /tmp/autounattend.xml
     fi
 
-    # 修改应答文件，分区配置
+    # Edit the answer file: partition configuration
     if is_efi; then
         sed -i "s|%installto_partitionid%|3|" /tmp/autounattend.xml
     else
         sed -i "s|%installto_partitionid%|1|" /tmp/autounattend.xml
     fi
 
-    # vista/2008 有这行安装会报错
+    # this line makes a vista/2008 install fail
     if [ "$nt_ver" = 6.0 ]; then
         sed -i "/EnableFirewall/d" /tmp/autounattend.xml
     fi
 
-    # 2012 r2，删除 key 字段，报错 Windows cannot read the <ProductKey> setting from the unattend answer file，即使创建 ei.cfg
-    # ltsc 2021，有 ei.cfg，填空白 key 正常
-    # ltsc 2021 n，有 ei.cfg，填空白 key 报错 Windows Cannot find Microsoft software license terms
-    # 评估版 iso ei.cfg 有 EVAL 字样，填空白 key 报错 Windows Cannot find Microsoft software license terms
+    # 2012 r2: removing the key field fails with "Windows cannot read the <ProductKey> setting from the unattend answer file", even with an ei.cfg
+    # ltsc 2021: has ei.cfg, a blank key works
+    # ltsc 2021 n: has ei.cfg, a blank key fails with "Windows Cannot find Microsoft software license terms"
+    # an evaluation iso has EVAL in ei.cfg, and a blank key fails with "Windows Cannot find Microsoft software license terms"
 
     # key
     if [ "$product_ver" = vista ]; then
-        # vista 无人值守安装需要密钥，密钥可与 edition 不一致
+        # an unattended vista install needs a key, which need not match the edition
         # https://learn.microsoft.com/en-us/windows-server/get-started/kms-client-activation-keys
-        # 从镜像获取默认密钥
+        # take the default key from the image
         setup_cfg=$(get_path_in_correct_case /os/installer/sources/inf/setup.cfg)
         key=$(del_cr <"$setup_cfg" | grep -Eix 'Value=([A-Z0-9]{5}-){4}[A-Z0-9]{5}' | cut -d= -f2 | grep .)
         sed -i "s/%key%/$key/" /tmp/autounattend.xml
     else
         if [ -f "$(get_path_in_correct_case /os/installer/sources/ei.cfg)" ]; then
-            # 镜像有 ei.cfg，删除 key 字段
+            # the image has ei.cfg, so remove the key field
             sed -i "/%key%/d" /tmp/autounattend.xml
         else
-            # 镜像无 ei.cfg，填空白 key
+            # the image has no ei.cfg, so use a blank key
             sed -i "s/%key%//" /tmp/autounattend.xml
         fi
     fi
 
-    # 挂载 boot.wim
+    # Mount boot.wim
     info "mount boot.wim"
     wimmountrw /os/boot.wim "$boot_index" /wim/
 
-    # 防止重复
+    # avoid duplicates
     copyed_infs=
     cp_drivers() {
         if [ "$1" = custom ]; then
@@ -6870,7 +6869,7 @@ EOF
         # -not -iname "*.pdb" \
         # -not -iname "dpinst.exe" \
 
-        # 这里需要在 while 里面变更 $copyed_infs，因此不能用 find | while
+        # $copyed_infs has to be modified inside the while loop, so find | while cannot be used
         while read -r inf; do
             if ! is_list_has "$copyed_infs" "$inf"; then
                 parse_inf_and_cp_driever "$inf" "$dst" "$arch" false
@@ -6879,10 +6878,10 @@ EOF
         done < <(find $src -type f -iname "*.inf" "$@")
     }
 
-    # 添加驱动
+    # Add the drivers
     add_drivers
 
-    # win7 要添加 bootx64.efi 到 efi 目录
+    # win7 needs bootx64.efi added to the efi directory
     if is_efi; then
         [ $arch = amd64 ] && boot_efi=bootx64.efi || boot_efi=bootaa64.efi
 
@@ -6895,8 +6894,8 @@ EOF
         fi
     fi
 
-    # 复制应答文件
-    # 移除注释，否则 windows-setup.bat 重新生成的 autounattend.xml 有问题
+    # Copy the answer file
+    # strip the comments, otherwise the autounattend.xml regenerated by windows-setup.bat is malformed
     wim_autounattend_xml=$(get_path_in_correct_case /wim/autounattend.xml)
     wim_windows_xml=$(get_path_in_correct_case /wim/windows.xml)
     wim_setup_exe=$(get_path_in_correct_case /wim/setup.exe)
@@ -6904,29 +6903,29 @@ EOF
     xmlstarlet ed -d '//comment()' /tmp/autounattend.xml >$wim_autounattend_xml
     unix2dos $wim_autounattend_xml
     info "autounattend.xml"
-    # 查看最终文件，并屏蔽密码
+    # Show the final file with the password masked
     xmlstarlet ed -d '//*[name()="AdministratorPassword" or name()="Password"]' $wim_autounattend_xml | cat -n
 
     apk del xmlstarlet
 
-    # 避免无参数运行 setup.exe 时自动安装
+    # stop setup.exe installing automatically when run without arguments
     mv $wim_autounattend_xml $wim_windows_xml
 
-    # 复制安装脚本
+    # Copy the install script
     # https://slightlyovercomplicated.com/2016/11/07/windows-pe-startup-sequence-explained/
     # https://learn.microsoft.com/previous-versions/windows/it-pro/windows-vista/cc721977(v=ws.10)
     mv $wim_setup_exe $wim_setup_exe.disabled
 
-    # 如果有重复的 Windows/System32 文件夹，会提示找不到 winload.exe 无法引导
-    # win7 win10  boot.wim 是 Windows/System32，install.wim 是 Windows/System32
-    # win2016     boot.wim 是 windows/system32，install.wim 是 Windows/System32
-    # wimmount 无法挂载成忽略大小写
+    # a duplicate Windows/System32 folder makes it report a missing winload.exe and fail to boot
+    # win7 and win10: boot.wim has Windows/System32, install.wim has Windows/System32
+    # win2016:        boot.wim has windows/system32, install.wim has Windows/System32
+    # wimmount cannot mount case-insensitively
 
     startnet_cmd=$(get_path_in_correct_case /wim/Windows/System32/startnet.cmd)
     winpeshl_ini=$(get_path_in_correct_case /wim/Windows/System32/winpeshl.ini)
 
     download $confhome/windows-setup.bat $startnet_cmd
-    # dism 手动释放镜像时用
+    # used when releasing the image manually with dism
     # sed -i "s|@image_name@|$image_name|" "$startnet.cmd"
 
     # shellcheck disable=SC2154
@@ -6934,53 +6933,53 @@ EOF
         sed -i 's/ForceOldSetup=0/ForceOldSetup=1/i' $startnet_cmd
     fi
 
-    # 有 SAC 组件时，启用 EMS
+    # Enable EMS when the SAC component is present
     if $has_sac; then
         sed -i 's/EnableEMS=0/EnableEMS=1/i' $startnet_cmd
     fi
 
-    # 4kn EFI 分区最少要 260M
+    # a 4kn EFI partition must be at least 260M
     # https://learn.microsoft.com/windows-hardware/manufacture/desktop/hard-drives-and-partitions
     if is_4kn; then
         sed -i 's/is4kn=0/is4kn=1/i' $startnet_cmd
     fi
 
-    # Windows Thin PC 有 Windows\System32\winpeshl.ini
+    # Windows Thin PC has Windows\System32\winpeshl.ini
     # [LaunchApps]
     # %SYSTEMDRIVE%\windows\system32\drvload.exe, %SYSTEMDRIVE%\windows\inf\sdbus.inf
     # %SYSTEMDRIVE%\setup.exe
     if [ -f "$winpeshl_ini" ]; then
         info "mod winpeshl.ini"
         # https://learn.microsoft.com/previous-versions/windows/it-pro/windows-vista/cc721977(v=ws.10)
-        # 两种方法都可以，第一种是原版命令
+        # both methods work; the first is the original command
         sed -i 's|setup.exe|windows\\system32\\cmd.exe, "/k %SYSTEMROOT%\\system32\\startnet.cmd"|i' "$winpeshl_ini"
         # sed -i 's|setup.exe|windows\\system32\\startnet.cmd|i' "$winpeshl_ini"
         cat -n "$winpeshl_ini"
     fi
 
-    # 提交修改 boot.wim
+    # Commit the boot.wim changes
     info "Unmount boot.wim"
     wimunmount --commit /wim/
 
-    # 原地优化可以用以下命令之一
+    # in-place optimization can use one of the following commands
     # wimdelete /os/boot.wim 1
     # wimoptimize /os/boot.wim
 
-    # 优化 boot.wim 并复制到正确的位置
+    # Optimize boot.wim and copy it into place
     if is_nt_ver_ge 6.1; then
-        # win7 或以上删除 boot.wim 镜像 1 不会报错
-        # 因为 win7 winre 镜像在 install.wim Windows\System32\Recovery\winRE.wim
+        # on win7 and later, deleting image 1 from boot.wim does not error,
+        # because the win7 winre image lives in install.wim at Windows\System32\Recovery\winRE.wim
         images=$boot_index
     else
-        # vista 删除 boot.wim 镜像 1 会报错
+        # on vista, deleting image 1 from boot.wim does error,
         # Windows cannot access the required file Drive:\Sources\Boot.wim.
         # Make sure all files required for installation are available and restart the installation.
         # Error code: 0x80070491
-        # vista install.wim 没有 Windows\System32\Recovery\winRE.wim
+        # because the vista install.wim has no Windows\System32\Recovery\winRE.wim
         images=all
     fi
     mkdir -p "$(get_path_in_correct_case "$(dirname $boot_dir/$sources_boot_wim)")"
-    # 防止不格盘二次运行时报错：文件已存在
+    # avoid the "file already exists" error on a second run without reformatting
     rm -f $boot_dir/$sources_boot_wim
     wimexport --boot /os/boot.wim "$images" $boot_dir/$sources_boot_wim
     info "boot.wim size"
@@ -6989,21 +6988,21 @@ EOF
     echo "Optimized:     $(get_filesize_mb "$boot_dir/$sources_boot_wim")"
     echo
 
-    # vista 安装时需要 boot.wim，原因见上面
+    # vista needs boot.wim during installation; see above for why
     if [ "$nt_ver" = 6.0 ] &&
         ! [ -e /os/installer/$sources_boot_wim ]; then
         cp $boot_dir/$sources_boot_wim /os/installer/$sources_boot_wim
     fi
 
-    # windows 7 没有 invoke-webrequest
-    # installer分区盘符不一定是D盘
-    # 所以复制 resize.bat 到 install.wim
+    # windows 7 has no invoke-webrequest
+    # the installer partition is not necessarily drive D,
+    # so copy resize.bat into install.wim
     if true; then
         info "mount install.wim"
         wimmountrw $install_wim "$image_index" /wim/
         if false; then
-            # 使用 autounattend.xml
-            # win7 在此阶段找不到网卡
+            # use autounattend.xml
+            # win7 cannot find the NIC at this stage
             download $confhome/windows-resize.bat /wim/windows-resize.bat
             for ethx in $(get_eths); do
                 create_win_set_netconf_script /wim/windows-set-netconf-$ethx.bat
@@ -7016,18 +7015,18 @@ EOF
         wimunmount --commit /wim/
     fi
 
-    # 添加引导
+    # Add the boot entry
     if is_efi; then
-        # 现在 add_default_efi_to_nvram() 添加 bootx64.efi 到最前面
-        # 因此这里重复了
+        # add_default_efi_to_nvram() now prepends bootx64.efi,
+        # so this is redundant
         if false; then
             apk add efibootmgr
             efibootmgr -c -L "Windows Installer" -d /dev/$xda -p1 -l "\\EFI\\boot\\$boot_efi"
         fi
     else
-        # 或者用 ms-sys
+        # or use ms-sys
         apk add grub-bios
-        # efi 下，强制安装 mbr 引导，需要添加 --target i386-pc
+        # under efi, forcing an mbr boot install requires --target i386-pc
         grub-install --target i386-pc --boot-directory="$(get_path_in_correct_case /os/boot)" /dev/$xda
         cat <<EOF >"$(get_path_in_correct_case /os/boot/grub/grub.cfg)"
             set timeout=5
@@ -7041,7 +7040,7 @@ EOF
     fi
 }
 
-# 添加 netboot.efi 备用
+# Add netboot.efi as a fallback
 download_netboot_xyz_efi() {
     dir=$1
     info "download netboot.xyz.efi"
@@ -7067,14 +7066,14 @@ refind_main_disk() {
 
 sync_time() {
     if false; then
-        # arm要手动从硬件同步时间，避免访问https出错
-        # do 机器第二次运行会报错
+        # arm must sync the time from hardware manually, or https requests fail
+        # a second run on a do machine errors out
         hwclock -s || true
     fi
 
-    # ntp 时间差太多会无法同步？
-    # http 时间可能不准确，毕竟不是专门的时间服务器
-    #      也有可能没有 date header?
+    # can ntp fail to sync when the time is too far off?
+    # the http time may be inaccurate, since it is not a dedicated time server
+    #      and there may be no date header at all?
     method=http
 
     case "$method" in
@@ -7088,14 +7087,14 @@ sync_time() {
         ;;
     http)
         url="$(grep -m1 ^http /etc/apk/repositories)/$(uname -m)/APKINDEX.tar.gz"
-        # 可能有多行，取第一行
+        # there may be several lines, so take the first
         date_header=$(wget -S --no-check-certificate --spider "$url" 2>&1 | grep -m1 '^  Date:')
-        # gnu date 不支持 -D
+        # gnu date does not support -D
         busybox date -u -D "  Date: %a, %d %b %Y %H:%M:%S GMT" -s "$date_header"
         ;;
     esac
 
-    # 重启时 alpine 会自动写入到硬件时钟，因此这里跳过
+    # alpine writes to the hardware clock automatically on reboot, so skip it here
     # hwclock -w
 }
 
@@ -7105,22 +7104,22 @@ is_ubuntu_lts() {
 }
 
 get_ubuntu_kernel_flavor() {
-    # 20.04/22.04 kvm 内核 vnc 没显示
+    # the 20.04/22.04 kvm kernel shows nothing on the vnc console
     # 24.04 kvm = virtual
     # linux-image-virtual = linux-image-6.x-generic
     # linux-image-generic = linux-image-6.x-generic + amd64-microcode + intel-microcode + linux-firmware + linux-modules-extra-generic
 
-    # TODO: ISO virtual-hwe-24.04 不安装 linux-image-extra-virtual-hwe-24.04 不然会花屏
+    # TODO: with the ISO virtual-hwe-24.04, linux-image-extra-virtual-hwe-24.04 must be installed or the display is corrupted
 
     # https://github.com/systemd/systemd/blob/main/src/basic/virt.c
     # https://github.com/canonical/cloud-init/blob/main/tools/ds-identify
     # http://git.annexia.org/?p=virt-what.git;a=blob;f=virt-what.in;hb=HEAD
 
-    # 这里有坑
-    # $(get_cloud_vendor) 调用了 cache_dmi_and_virt
-    # 但是 $(get_cloud_vendor) 运行在 subshell 里面
-    # subshell 运行结束后里面的变量就消失了
-    # 因此先运行 cache_dmi_and_virt
+    # a trap here:
+    # $(get_cloud_vendor) calls cache_dmi_and_virt
+    # but $(get_cloud_vendor) runs in a subshell,
+    # and the variables set inside vanish when the subshell exits,
+    # so run cache_dmi_and_virt first
     cache_dmi_and_virt
     vendor="$(get_cloud_vendor)"
     case "$vendor" in
@@ -7139,9 +7138,9 @@ get_ubuntu_kernel_flavor() {
 install_redhat_ubuntu() {
     info "Download iso installer"
 
-    # 安装 grub2
+    # Install grub2
     if is_efi; then
-        # 注意低版本的grub无法启动f38 arm的内核
+        # note that an older grub cannot boot the f38 arm kernel
         # https://forums.fedoraforum.org/showthread.php?330104-aarch64-pxeboot-vmlinuz-file-format-changed-broke-PXE-installs
         apk add grub-efi efibootmgr
         grub-install --efi-directory=/os/boot/efi --boot-directory=/os/boot
@@ -7150,11 +7149,11 @@ install_redhat_ubuntu() {
         grub-install --boot-directory=/os/boot /dev/$xda
     fi
 
-    # 重新整理 extra，因为grub会处理掉引号，要重新添加引号
+    # Rebuild extra, because grub strips the quotes and they must be re-added
     extra_cmdline=''
     for var in $(grep -o '\bextra_[^ ]*' /proc/cmdline | xargs); do
         if [[ "$var" = "extra_main_disk=*" ]]; then
-            # 重新记录主硬盘
+            # record the main disk again
             refind_main_disk
             extra_cmdline="$extra_cmdline extra_main_disk=$main_disk"
         else
@@ -7162,24 +7161,24 @@ install_redhat_ubuntu() {
         fi
     done
 
-    # 安装红帽系时，只有最后一个有安装界面显示
+    # when installing a red hat derivative, only the last one shows an installer UI
     # https://anaconda-installer.readthedocs.io/en/latest/boot-options.html#console
     console_cmdline=$(get_ttys console=)
     grub_cfg=/os/boot/grub/grub.cfg
 
-    # 新版grub不区分linux/linuxefi
+    # newer grub does not distinguish linux from linuxefi
     # shellcheck disable=SC2154
     if [ "$distro" = "ubuntu" ]; then
         download $iso /os/installer/ubuntu.iso
         mkdir -p /iso
         mount -o ro /os/installer/ubuntu.iso /iso
 
-        # 内核风味
+        # kernel flavour
         kernel=$(get_ubuntu_kernel_flavor)
 
-        # 要安装的版本
+        # the version to install
         # https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html#id
-        # 20.04 不能选择 minimal ，也没有 install-sources.yaml
+        # 20.04 cannot select minimal and has no install-sources.yaml
         source_id=
         if [ -f /iso/casper/install-sources.yaml ]; then
             ids=$(grep id: /iso/casper/install-sources.yaml | awk '{print $2}')
@@ -7195,8 +7194,8 @@ install_redhat_ubuntu() {
             fi
         fi
 
-        # 正常写法应该是 ds="nocloud-net;s=https://xxx/" 但是甲骨文云的ds更优先，自己的ds根本无访问记录
-        # $seed 是 https://xxx/
+        # the normal form would be ds="nocloud-net;s=https://xxx/", but the Oracle Cloud ds takes priority and ours is never even requested
+        # $seed is https://xxx/
         cat <<EOF >$grub_cfg
         set timeout=5
         menuentry "reinstall" {
@@ -7236,8 +7235,8 @@ trans() {
 
     mod_motd
 
-    # 先检查 modloop 是否正常
-    # 防止格式化硬盘后，缺少 ext4 模块导致 mount 失败
+    # Check that modloop is healthy first,
+    # so a missing ext4 module does not make mount fail after the disk is formatted
     # https://github.com/bin456789/reinstall/issues/136
     ensure_service_started modloop
 
@@ -7245,8 +7244,8 @@ trans() {
     clear_previous
     add_community_repo
 
-    # 需要在重新分区之前，找到主硬盘
-    # 重新运行脚本时，可指定 xda
+    # The main disk must be found before repartitioning
+    # xda can be specified when re-running the script
     # xda=sda ash trans.start
     if [ -z "$xda" ]; then
         find_xda
@@ -7254,15 +7253,15 @@ trans() {
 
     if [ "$distro" != "alpine" ]; then
         setup_web_if_enough_ram
-        # util-linux 包含 lsblk
-        # util-linux 可自动探测 mount 格式
+        # util-linux provides lsblk
+        # util-linux can auto-detect the mount format
         apk add util-linux
     fi
 
-    # dd qemu 切换成云镜像模式，暂时没用到
+    # dd qemu switches to cloud image mode; not used at the moment
     # shellcheck disable=SC2154
     if [ "$distro" = "dd" ] && [ "$img_type" = "qemu" ]; then
-        # 移到 reinstall.sh ?
+        # move this into reinstall.sh?
         distro=any
         cloud_image=1
     fi
@@ -7274,11 +7273,11 @@ trans() {
             download_qcow
             case "$distro" in
             centos | almalinux | rocky | oracle | redhat | anolis | opencloudos | openeuler)
-                # 这几个系统云镜像系统盘是8~9g xfs，而我们的目标是能在5g硬盘上运行，因此改成复制系统文件
+                # the cloud images of these systems use an 8~9g xfs system partition, while we target 5g disks, so copy the system files instead
                 install_qcow_by_copy
                 ;;
             ubuntu)
-                # 24.04 云镜像有 boot 分区（在系统分区之前），因此不直接 dd 云镜像
+                # the 24.04 cloud image has a boot partition before the system partition, so do not dd the cloud image directly
                 install_qcow_by_copy
                 ;;
             *)
@@ -7290,7 +7289,7 @@ trans() {
             esac
             ;;
         raw)
-            # 暂时没用到 raw 格式的云镜像
+            # raw cloud images are not used at the moment
             dd_raw_with_extract
             resize_after_install_cloud_image
             modify_os_on_disk linux
@@ -7301,8 +7300,8 @@ trans() {
         raw)
             dd_raw_with_extract
             if false; then
-                # linux 扩容后无法轻易缩小，例如 xfs
-                # windows 扩容在 windows 下完成
+                # linux cannot easily shrink after growing, e.g. xfs
+                # windows growth is done from within windows
                 resize_after_install_cloud_image
             fi
             if [ -d /configs/cloud-data ]; then
@@ -7311,11 +7310,11 @@ trans() {
                 modify_os_on_disk windows
             fi
             ;;
-        qemu) # dd qemu 不可能到这里，因为上面已处理
+        qemu) # dd qemu can never reach here, it was handled above
             ;;
         esac
     else
-        # 安装模式
+        # installer mode
         case "$distro" in
         alpine)
             install_alpine
@@ -7335,41 +7334,41 @@ trans() {
         esac
     fi
 
-    # 需要用到 lsblk efibootmgr ，只要 1M 左右容量
-    # 因此 alpine 不单独处理
+    # lsblk and efibootmgr are needed, which is only about 1M,
+    # so alpine needs no special handling
     if is_efi; then
         del_invalid_efi_entry
         add_default_efi_to_nvram
     fi
 
     info 'done'
-    # 让 web 输出全部内容
+    # let the web output show everything
     sleep 5
 }
 
-# 脚本入口
-# debian initrd 会寻找 main
-# 并调用本文件的 create_ifupdown_config 方法
+# Script entry point
+# the debian initrd looks for main
+# and calls create_ifupdown_config from this file
 : main
 
-# 复制脚本
-# 用于打印错误或者再次运行
-# 路径相同则不用复制
-# 重点：要在删除脚本之前复制
+# Copy the script,
+# used to print the error or to run it again
+# no copy is needed when the paths are the same
+# important: copy it before deleting the script
 if ! [ "$(readlink -f "$0")" = /trans.sh ]; then
     cp -f "$0" /trans.sh
 fi
 trap 'trap_err $LINENO $?' ERR
 
-# 删除本脚本，不然会被复制到新系统
+# Delete this script, otherwise it would be copied into the new system
 rm -f /etc/local.d/trans.start
 rm -f /etc/runlevels/default/local
 
-# 提取变量
+# Extract the variables
 extract_env_from_cmdline
 
-# 带参数运行部分
-# 重新下载并 exec 运行新脚本
+# The part that runs with arguments
+# re-download and exec the new script
 if [ "$1" = "update" ]; then
     info 'update script'
     # shellcheck disable=SC2154
@@ -7379,32 +7378,32 @@ if [ "$1" = "update" ]; then
 elif [ "$1" = "alpine" ]; then
     info 'switch to alpine'
     distro=alpine
-    # 后面的步骤很多都会用到这个，例如分区布局
+    # many later steps use this, e.g. the partition layout
     cloud_image=0
 elif [ -n "$1" ]; then
     error_and_exit "unknown option $1"
 fi
 
-# 无参数运行部分
-# 允许 ramdisk 使用所有内存，默认是 50%
+# The part that runs without arguments
+# allow the ramdisk to use all memory; the default is 50%
 mount / -o remount,size=100%
 
-# 同步时间
-# 1. 可以防止访问 https 出错
-# 2. 可以防止 https://github.com/bin456789/reinstall/issues/223
+# Sync the time
+# 1. prevents https errors
+# 2. prevents https://github.com/bin456789/reinstall/issues/223
 #    E: Release file for http://security.ubuntu.com/ubuntu/dists/noble-security/InRelease is not valid yet (invalid for another 5h 37min 18s).
 #    Updates for this repository will not be applied.
-# 3. 不能直接读取 rtc，因为默认情况 windows rtc 是本地时间，linux rtc 是 utc 时间
-# 4. 允许同步失败，因为不是关键步骤
+# 3. the rtc cannot be read directly, because windows keeps it in local time and linux in utc
+# 4. a failure here is tolerated, since it is not a critical step
 sync_time || true
 
-# 安装 ssh 并更改端口
+# Install ssh and change the port
 apk add openssh-server
 if is_need_change_ssh_port; then
     change_ssh_port / $ssh_port
 fi
 
-# 设置密码，添加开机启动 + 开启 ssh 服务
+# Set the password, add the startup entry and enable the ssh service
 add_user_if_need /
 if is_need_set_ssh_keys; then
     set_ssh_keys_and_del_password /
@@ -7416,8 +7415,8 @@ else
     printf '\nyes' | setup-sshd
 fi
 
-# 设置 frpc
-# 并防止重复运行
+# Set up frpc
+# and guard against running twice
 if ls /configs/frpc.* >/dev/null 2>&1 && ! pidof frpc >/dev/null; then
     info 'run frpc'
     add_community_repo
@@ -7436,11 +7435,11 @@ if [ "$hold" = 1 ]; then
     fi
 fi
 
-# 正式运行重装
+# Start the actual reinstall
 # shellcheck disable=SC2046,SC2194
 case 1 in
 1)
-    # ChatGPT 说这种性能最高
+    # this form performs best
     exec > >(exec tee $(get_ttys /dev/) /reinstall.log) 2>&1
     trans
     ;;

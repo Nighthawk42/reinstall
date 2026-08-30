@@ -1,10 +1,10 @@
 @echo off
 mode con cp select=437 >nul
 
-rem 还原 setup.exe
+rem Restore setup.exe
 rename X:\setup.exe.disabled setup.exe
 
-rem 等待 10 秒才自动安装
+rem Wait 10 seconds before starting the install
 cls
 for /l %%i in (10,-1,1) do (
     echo Press Ctrl+C within %%i seconds to cancel the automatic installation.
@@ -12,103 +12,103 @@ for /l %%i in (10,-1,1) do (
     cls
 )
 
-rem win7 find 命令在 65001 代码页下有问题，仅限 win 7
-rem findstr 就正常，但安装程序又没有 findstr
+rem the find command misbehaves under code page 65001, win7 only
+rem findstr works fine, but the installer does not ship findstr
 rem echo a | find "a"
 
-rem 使用高性能模式
+rem Use the High performance power plan
 rem https://learn.microsoft.com/windows-hardware/manufacture/desktop/capture-and-apply-windows-using-a-single-wim
-rem win8 pe 没有 powercfg
+rem win8 pe has no powercfg
 powercfg /s SCHEME_MIN 2>nul
 
-rem 安装 SCSI 驱动
+rem Install the SCSI drivers
 if exist X:\drivers\ (
     for /f "delims=" %%F in ('dir /s /b "X:\drivers\*.inf" 2^>nul') do (
         call :drvload_if_scsi "%%~F"
     )
 
-    rem 官网写了可以安装但仅会加载关键驱动
-    rem Gcore 的 virtio-gpu 在安装时没有显示
-    rem 即使安装时加载了显卡驱动
-    rem 进入系统后才有显示
+    rem the docs say it installs, but only critical drivers get loaded
+    rem Gcore's virtio-gpu shows nothing during setup
+    rem even when the display driver is loaded during setup
+    rem output only appears once the system boots
     rem find /i "viogpudo" "%%~F" >nul
     rem if not errorlevel 1 (
     rem     drvload "%%~F"
     rem )
 )
 
-rem 安装自定义 SCSI 驱动
-rem 可以用 forfiles /p X:\custom_drivers /m *.inf /c "cmd /c echo @path"
-rem 不可以用 for %%F in ("X:\custom_drivers\*\*.inf")
+rem Install the custom SCSI drivers
+rem forfiles /p X:\custom_drivers /m *.inf /c "cmd /c echo @path" works
+rem for %%F in ("X:\custom_drivers\*\*.inf") does not
 if exist X:\custom_drivers\ (
     for /f "delims=" %%F in ('dir /s /b "X:\custom_drivers\*.inf" 2^>nul') do (
         call :drvload_if_scsi "%%~F"
     )
 )
 
-rem 等待加载分区
+rem Wait for the partitions to load
 call :sleep 5000
 echo rescan | diskpart
 call :sleep 5000
 
-rem 获取 ProductType
+rem Get the ProductType
 rem for /f "tokens=3" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\ProductOptions" /v ProductType') do (
 rem     set "ProductType=%%a"
 rem )
 
-rem 获取 installer 卷 id
+rem Get the installer volume id
 for /f "tokens=2" %%a in ('echo list vol ^| diskpart ^| find " installer "') do (
     set "VolIndex=%%a"
 )
 
-rem 及时退出
+rem Exit promptly
 if "%VolIndex%"=="" (
     echo Error: Cannot find installer partition. >&2
     exit /b 1
 )
 
-rem 将 installer 分区设为 Y 盘
+rem Assign drive letter Y to the installer partition
 (echo select vol %VolIndex% & echo assign letter=Y) | diskpart
 
-rem 旧版安装程序会自动在 C 盘设置虚拟内存
-rem 新版安装程序(24h2)不会自动设置虚拟内存
-rem 在 installer 分区创建虚拟内存，不用白不用
+rem the old installer sets up a pagefile on C: automatically
+rem the new installer (24h2) does not
+rem create the pagefile on the installer partition; the space is free anyway
 call :createPageFile
 
-rem 查看虚拟内存
+rem Show the pagefile
 rem wmic pagefile
 
-rem 获取主硬盘 id
-rem vista pe 没有 wmic，因此用 diskpart
+rem Get the main disk id
+rem vista pe has no wmic, so use diskpart
 
-rem 法语版 win7 diskpart 始终输出法语，即使设置了 chcp 437，因此不能用这个方法
+rem French win7 diskpart always prints French even with chcp 437, so this approach will not work
 rem (echo select vol %VolIndex% & echo list disk) | diskpart | find "* Disk " > X:\disk.txt
 rem for /f "tokens=3" %%a in (X:\disk.txt) do (
 rem     set "DiskIndex=%%a"
 rem )
 
-rem PE 下没有 findstr，因此不能从 diskpart 的输出直接选出开头为 * 的行，要用复杂的方法取出磁盘编号
+rem PE has no findstr, so the * line cannot be picked out of diskpart output directly; the disk number needs a roundabout method
 
-rem 输出 diskpart 结果到文件
+rem Write the diskpart output to a file
 (echo select vol %VolIndex% & echo list disk) | diskpart | find "* " > X:\disk.txt
 type X:\disk.txt
 
-rem 逐行读取文件
+rem Read the file line by line
 setlocal enabledelayedexpansion
 for /f "delims=" %%a in (X:\disk.txt) do (
     set "line=%%a"
 
-    rem 寻找 * 开头的行
+    rem find the line starting with *
     call :is_x_starts_with_char_y "!line!" "*" && (
-        rem 注意在 for %%b in (!safe_line!) do 中 * 会展开成文件列表，因此要先删除 *
-        rem 下面用的方法是用 * 作为分割符，获取 * 后面的第一列
+        rem note: in "for %%b in (!safe_line!) do", * expands to a file list, so strip the * first
+        rem the approach below uses * as the delimiter and takes the first column after it
 
-        rem for /f 会自动忽略行首的分隔符
+        rem for /f automatically ignores leading delimiters
         for /f "tokens=1 delims=*" %%i in ("!line!") do (
             set "safe_line=%%i"
         )
 
-        rem 遍历每一列，找到是数字的那一列，就是磁盘编号
+        rem walk the columns; the numeric one is the disk number
         for %%b in (!safe_line!) do (
             call :is_number "%%b" && (
                 set "DiskIndex=%%b"
@@ -116,8 +116,8 @@ for /f "delims=" %%a in (X:\disk.txt) do (
             )
         )
 
-        rem 普通 for 是把“一段话”里的“每个词”排成队，让一个变量（%%b）轮流去当这些词
-        rem for /f   是把“一段话”拆成“几个零件”存在不同的变量里（%%i, %%j...）
+        rem a plain for queues up each word of a string and binds one variable (%%b) to each in turn
+        rem for /f splits a string into pieces held in separate variables (%%i, %%j, ...)
     )
 )
 
@@ -129,16 +129,16 @@ exit /b 1
 del X:\disk.txt
 endlocal & set "DiskIndex=%DiskIndex%"
 
-rem 判断 efi 还是 bios
-rem 或者用 https://learn.microsoft.com/windows-hardware/manufacture/desktop/boot-to-uefi-mode-or-legacy-bios-mode
-rem pe 下没有 mountvol
+rem Determine efi or bios
+rem or use https://learn.microsoft.com/windows-hardware/manufacture/desktop/boot-to-uefi-mode-or-legacy-bios-mode
+rem pe has no mountvol
 echo list vol | diskpart | find " efi " && (
     set BootType=efi
 ) || (
     set BootType=bios
 )
 
-rem 这个变量会被 trans.sh 修改
+rem this variable is rewritten by trans.sh
 set is4kn=0
 if "%is4kn%"=="1" (
     set EFISize=260
@@ -146,7 +146,7 @@ if "%is4kn%"=="1" (
     set EFISize=100
 )
 
-rem 重新分区/格式化
+rem Repartition / format
 (if "%BootType%"=="efi" (
     echo select disk %DiskIndex%
 
@@ -185,30 +185,30 @@ rem 重新分区/格式化
 
 )) > X:\diskpart.txt
 
-rem 使用 diskpart /s ，出错后不会执行剩下的 diskpart 命令
-rem 但是返回值始终是 0
+rem with diskpart /s, the remaining diskpart commands are skipped after an error
+rem but the exit code is always 0
 diskpart /s X:\diskpart.txt
 del X:\diskpart.txt
 
-rem 盘符
+rem Drive letter
 rem X boot.wim (ram)
 rem Y installer
 rem Z os
 
-rem 获取 BuildNumber
+rem Get the BuildNumber
 for /f "tokens=3" %%a in ('reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion" /v CurrentBuildNumber') do (
     set "BuildNumber=%%a"
 )
 
-rem 旧版安装程序会自动在C盘设置虚拟内存，新版安装程序(24h2)不会
-rem 如果不创建虚拟内存，1g 内存的机器安装时会报错/杀进程
+rem the old installer sets a pagefile on C: automatically, the new one (24h2) does not
+rem without a pagefile, a 1G-RAM machine errors out or has processes killed during setup
 if %BuildNumber% GEQ 26040 (
-    rem 已经在 installer 分区创建了虚拟内存，约等于 boot.wim 的大小，因此这步不需要
-    rem vista/2008 没有删除 boot.wim，200M预留空间-(文件系统占用+驱动占用)后，实测能创建1个64M虚拟内存文件
+    rem a pagefile roughly the size of boot.wim already exists on the installer partition, so this is unnecessary
+    rem vista/2008 keeps boot.wim; after the 200M reserve minus filesystem and driver usage, a 64M pagefile fits in practice
     rem call :createPageFileOnZ
 )
 
-rem 设置应答文件的主硬盘 id
+rem Set the main disk id in the answer file
 set "file=X:\windows.xml"
 set "tempFile=X:\tmp.xml"
 
@@ -231,17 +231,17 @@ for %%a in (RAM TPM SecureBoot) do (
     reg add HKLM\SYSTEM\Setup\LabConfig /t REG_DWORD /v Bypass%%aCheck /d 1 /f
 )
 
-rem 设置
+rem Settings
 set ForceOldSetup=0
 set EnableUnattended=1
 set EnableEMS=0
 
-rem 运行 ramdisk X:\setup.exe 的话
-rem vista 会找不到安装源
-rem server 23h2 会无法运行
-rem 使用 /installfrom 可以解决?
+rem when running the ramdisk X:\setup.exe
+rem vista cannot find the install source
+rem server 23h2 fails to run
+rem would /installfrom fix this?
 
-rem 有的精简版 iso install.wim 根目录没有 setup.exe
+rem some trimmed-down isos have no setup.exe at the root of install.wim
 rem https://github.com/bin456789/reinstall/issues/578
 
 if "%ForceOldSetup%"=="1" if exist Y:\sources\setup.exe (
@@ -264,29 +264,29 @@ if "%EnableUnattended%"=="1" (
     set Unattended=/unattend:X:\windows.xml
 )
 
-rem 新版安装程序默认开了 Compact OS
+rem the new installer enables Compact OS by default
 
-rem 新版安装程序不会创建 BIOS MBR 引导
-rem 因此要回退到旧版，或者手动修复 MBR
-rem server 2025 + bios 也是
-rem 但是 server 2025 官网写支持 bios
-rem TODO: 使用 ms-sys 可以不修复？
+rem the new installer does not create BIOS MBR boot records
+rem so fall back to the old installer, or repair the MBR manually
+rem the same applies to server 2025 + bios
+rem even though the server 2025 docs claim bios support
+rem TODO: could ms-sys avoid the repair?
 if %BuildNumber% GEQ 26040 if "%BootType%"=="bios" (
     rem set ForceOldSetup=1
     bootrec /fixmbr
 )
 
-rem 旧版安装程序不会创建 winre 分区
-rem 新版安装程序会创建 winre 分区
-rem winre 分区创建在 installer 分区前面
-rem 禁止 winre 分区后，winre 储存在 C 盘，依然有效
+rem the old installer does not create a winre partition
+rem the new installer does
+rem and it places winre before the installer partition
+rem with the winre partition disabled, winre lives on C: and still works
 if %BuildNumber% GEQ 26040 if "%ForceOldSetup%"=="0" (
     set ResizeRecoveryPartition=/ResizeRecoveryPartition Disable
 )
 
-rem 为 windows server 打开 EMS/SAC
-rem 普通 windows 没有自带 SAC 组件，暂不处理
-rem 现在通过 trans.sh 准确检测系统是否有 SAC 组件，有则修改 EnableEMS 变量打开 EMS
+rem Enable EMS/SAC for windows server
+rem desktop windows has no SAC component, so it is left alone for now
+rem trans.sh now detects the SAC component accurately and sets EnableEMS when present
 if "%EnableEMS%"=="1" (
     rem set EMS=/EMSPort:UseBIOSSettings /EMSBaudRate:115200
     set EMS=/EMSPort:COM1 /EMSBaudRate:115200
@@ -301,9 +301,9 @@ exit /b
 
 
 :is_number
-rem 尝试转换字符串为数字，如果转换失败则说明不是数字
-rem 如果转换失败，num 是 0
-rem 这不影响参数是 0 时的判断
+rem try to convert the string to a number; failure means it is not numeric
+rem on failure num is 0
+rem which does not affect the check when the argument really is 0
 set /a "num=%~1" >nul 2>nul
 if "%num%"=="%~1" (
     exit /b 0
@@ -318,8 +318,8 @@ if "%tempStr:~0,1%"=="%~2" (
 exit /b 1
 
 :sleep
-rem 没有加载网卡驱动，无法用 ping 来等待
-rem 没有 timeout 命令
+rem no NIC driver is loaded, so ping cannot be used to wait
+rem and there is no timeout command
 rem timeout /t 10 /nobreak
 echo wscript.sleep(%~1) > X:\sleep.vbs
 cscript //nologo X:\sleep.vbs
@@ -327,7 +327,7 @@ del X:\sleep.vbs
 exit /b
 
 :createPageFile
-rem 尽量填满空间，pagefile 默认 64M
+rem fill as much space as possible; the pagefile defaults to 64M
 for /l %%i in (1, 1, 100) do (
     wpeutil CreatePageFile /path=Y:\pagefile%%i.sys >nul 2>nul && echo Created pagefile%%i.sys || exit /b
 )
@@ -338,15 +338,15 @@ wpeutil CreatePageFile /path=Z:\pagefile.sys /size=512
 exit /b
 
 :drvload_if_scsi
-rem 不要查找 Class=SCSIAdapter 因为有些驱动等号两边有空格
+rem do not search for Class=SCSIAdapter: some drivers have spaces around the equals sign
 find /i "SCSIAdapter" "%~1" >nul
 if not errorlevel 1 (
-    rem 有 N 种方法安装驱动
-    rem 1. dism /online /add-driver /driver:"%~1"     # PE 不支持 /online 添加驱动
+    rem there are several ways to install drivers
+    rem 1. dism /online /add-driver /driver:"%~1"     # PE does not support /online
     rem 2. pnputil -i -a "%~1"
     rem 3. devcon
     rem 4. dpinst
-    rem 5. drvload 官方推荐 https://learn.microsoft.com/windows-hardware/manufacture/desktop/drvload-command-line-options
+    rem 5. drvload, the officially recommended way https://learn.microsoft.com/windows-hardware/manufacture/desktop/drvload-command-line-options
     drvload "%~1"
 )
 exit /b

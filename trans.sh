@@ -3589,9 +3589,9 @@ _is_ssh_kv_effective() {
         mkdir -p "$os_dir/run/sshd"
     fi
 
-    # centos 7 / ubuntu 22.04 不支持 -G
+    # centos 7 / ubuntu 22.04 do not support -G
     if res=$(chroot "$os_dir" sshd -G 2>/dev/null || chroot "$os_dir" sshd -T 2>/dev/null); then
-        # 删除自己创建的，避免后续权限不准确
+        # remove the one we created, to avoid leaving the permissions wrong
         if $we_create_run_sshd_dir; then
             rm -rf "$os_dir/run/sshd"
         fi
@@ -3610,7 +3610,7 @@ is_ssh_kv_effective() {
         return 0
     fi
 
-    # centos 7 设置 prohibit-password ，sshd -T 会显示成 without-password
+    # with prohibit-password on centos 7, sshd -T reports without-password
     if [ "$(echo "$key" | to_lower)" = "permitrootlogin" ] && {
         [ "$(echo "$value" | to_lower)" = "prohibit-password" ] ||
             [ "$(echo "$value" | to_lower)" = "without-password" ]
@@ -3633,7 +3633,7 @@ change_ssh_conf_if_different() {
         sub_conf=$(echo "01-$key.conf" | to_lower)
     fi
 
-    # 有些发行版自带了某些配置，例如
+    # some distros ship certain settings already, e.g.
     # ubuntu:
     # cat /etc/ssh/sshd_config.d/60-cloudimg-settings.conf | grep -i PasswordAuthentication
     # PasswordAuthentication no
@@ -3642,30 +3642,30 @@ change_ssh_conf_if_different() {
     # cat /etc/ssh/sshd_config.d/9999999gentoo-pam.conf | grep -i PasswordAuthentication
     # PasswordAuthentication no
 
-    # 0. 如果已经有这个配置，则不修改，避免不必要的改动
+    # 0. if the setting is already present, leave it alone to avoid needless changes
     if is_ssh_kv_effective "$os_dir" "$key" "$value"; then
         return
     fi
 
     if line="^$key .*" && grep -Exiq "$line" $os_dir/etc/ssh/sshd_config 2>/dev/null; then
-        # 1. 如果 sshd_config 存在此 key（非注释状态），则替换
+        # 1. if sshd_config has this key uncommented, replace it
         sed -Ei "s/$line/$key $value/" $os_dir/etc/ssh/sshd_config
     elif include_line='^Include .*/etc/ssh/sshd_config.d' &&
-        # 2. 如果 sshd_config 设置了读取 sshd_config.d
-        #    则写入到 sshd_config.d/01-xxx.conf
+        # 2. if sshd_config is set up to read sshd_config.d,
+        #    write to sshd_config.d/01-xxx.conf
 
-        # arch 没有 /etc/ssh/sshd_config.d/ 文件夹
-        # opensuse tumbleweed 没有 /etc/ssh/sshd_config
-        #                       有 /etc/ssh/sshd_config.d/ 文件夹
-        #                       有 /usr/etc/ssh/sshd_config
+        # arch has no /etc/ssh/sshd_config.d/ folder
+        # opensuse tumbleweed has no /etc/ssh/sshd_config
+        #                       but does have /etc/ssh/sshd_config.d/
+        #                       and /usr/etc/ssh/sshd_config
         { grep -iq "$include_line" $os_dir/etc/ssh/sshd_config ||
             grep -iq "$include_line" $os_dir/usr/etc/ssh/sshd_config; } 2>/dev/null; then
         mkdir -p $os_dir/etc/ssh/sshd_config.d/
         echo "$key $value" >"$os_dir/etc/ssh/sshd_config.d/$sub_conf"
     else
-        # 3. 写入 sshd_config
-        #    如果 sshd_config 存在此 key (无论是否已注释)，则替换，包括删除注释
-        #    否则追加
+        # 3. write to sshd_config
+        #    if sshd_config has this key (commented or not), replace it and drop the comment
+        #    otherwise append
         line="^[# ]*$key .*"
         if grep -Exiq "$line" $os_dir/etc/ssh/sshd_config; then
             sed -Ei "s/$line/$key $value/" $os_dir/etc/ssh/sshd_config
@@ -3674,7 +3674,7 @@ change_ssh_conf_if_different() {
         fi
     fi
 
-    # 验证是否成功
+    # Verify that it worked
     if ! is_ssh_kv_effective "$os_dir" "$key" "$value"; then
         error_and_exit "Failed to set sshd config $key $value."
     fi
@@ -3685,7 +3685,7 @@ change_ssh_conf_for_key_login() {
 
     change_ssh_conf_if_different "$os_dir" PasswordAuthentication no
 
-    # centos 7 PermitRootLogin 默认是 yes，而不是 prohibit-password
+    # on centos 7 PermitRootLogin defaults to yes rather than prohibit-password
     if [ "$username" = root ]; then
         change_ssh_conf_if_different "$os_dir" PermitRootLogin prohibit-password
     fi
@@ -3694,18 +3694,18 @@ change_ssh_conf_for_key_login() {
 change_ssh_conf_for_password_login() {
     local os_dir=$1
 
-    # opensuse 16/tumbleweed 安装 openssh-server-config-rootlogin
-    # 会生成 /usr/etc/ssh/sshd_config.d/50-permit-root-login.conf
-    # 但是如果用户删除了此文件，包有更新的话，可能会重新创建这个文件？
-    # 因此先不用这个方法
+    # installing openssh-server-config-rootlogin on opensuse 16/tumbleweed
+    # generates /usr/etc/ssh/sshd_config.d/50-permit-root-login.conf
+    # but if the user deletes that file, a package update may recreate it
+    # so avoid this approach for now
     if false &&
         [ -f $os_dir/etc/os-release ] &&
         grep -iq opensuse $os_dir/etc/os-release; then
         chroot $os_dir zypper install -y openssh-server-config-rootlogin
     fi
 
-    # PasswordAuthentication 默认是 yes
-    # 但某些发行版会在 sshd_config.d 里设置 PasswordAuthentication no
+    # PasswordAuthentication defaults to yes
+    # but some distros set PasswordAuthentication no in sshd_config.d
     change_ssh_conf_if_different "$os_dir" PasswordAuthentication yes
 
     if [ "$username" = root ]; then
@@ -3720,7 +3720,7 @@ change_ssh_port() {
     change_ssh_conf_if_different "$os_dir" Port "$ssh_port"
 }
 
-# 暂时用不着
+# Not needed for now
 add_user_if_need_for_alpine() {
     local os_dir=$1
 
@@ -3740,15 +3740,15 @@ add_user_if_need_for_alpine() {
 add_user_if_need() {
     local os_dir=$1
 
-    # 添加用户
+    # Add the user
     if ! grep -q "^$username:" "$os_dir/etc/passwd"; then
-        # debian 推荐使用 adduser 而不是 useradd
+        # debian recommends adduser over useradd
         # https://manpages.debian.org/trixie/passwd/useradd.8.en.html
         # useradd is a low level utility for adding users.
         # On Debian, administrators should usually use adduser(8) instead.
 
-        # adduser 会从 /etc/adduser.conf 读取默认要添加的组
-        # 然而通常这个值是空白
+        # adduser reads the default groups from /etc/adduser.conf,
+        # but that value is usually blank
 
         # alpine
         if is_have_cmd_on_disk "$os_dir" adduser &&
@@ -3765,45 +3765,45 @@ add_user_if_need() {
             chroot "$os_dir" adduser --help 2>&1 | grep -Fq -- '--password'; then
             chroot "$os_dir" adduser --password ! "$username"
 
-        # arch/gentoo 默认没有 adduser
+        # arch/gentoo have no adduser by default
         else
             chroot "$os_dir" useradd -m "$username"
         fi
     fi
 
-    # 添加到 wheel/sudo 组
+    # Add to the wheel/sudo group
     if ! [ "$username" = root ]; then
         if [ -e "$os_dir/etc/alpine-release" ]; then
             # alpine
             # https://github.com/alpinelinux/alpine-conf/blob/master/setup-user.in#L168
 
-            # 安装 doas
+            # install doas
             chroot "$os_dir" apk add doas doas-sudo-shim
             mkdir -p "$os_dir/etc/doas.d"
 
-            # 添加用户到组
+            # add the user to the group
             chroot "$os_dir" addgroup "$username" wheel
 
-            # doas: 添加 wheel 组
+            # doas: add the wheel group
             local file="$os_dir/etc/doas.d/20-wheel.conf"
             local content="permit persist :wheel"
             if ! grep -q "^$content" "$file" 2>/dev/null; then
                 echo "$content" >>"$file"
             fi
 
-            # doas: 添加单个用户 nopass
+            # doas: add a single nopass user
             echo "permit nopass $username" >"$os_dir/etc/doas.d/99-$username.conf"
         else
-            # 通常用 wheel 组
-            # debian/ubuntu 没有 wheel 组，只有 sudo 组
+            # the wheel group is the usual one
+            # debian/ubuntu have no wheel group, only sudo
 
-            # aws lightsail 上测试默认用户加入了哪些组
+            # tested on aws lightsail to see which groups the default user joins
             # debian       admin : admin adm dialout cdrom floppy sudo audio dip video plugdev
             # ubuntu       ubuntu : ubuntu adm cdrom sudo dip lxd
             # almalinux    ec2-user : ec2-user adm systemd-journal
             # opensuse     ec2-user : ec2-user
 
-            # 添加用户到组
+            # add the user to the group
             for group in \
                 wheel sudo \
                 adm dialout cdrom floppy audio dip video plugdev lxd systemd-journal; do
@@ -3813,12 +3813,12 @@ add_user_if_need() {
                 fi
             done
 
-            # sudo: gentoo 安装 sudo 后也没有 /etc/sudoers.d
+            # sudo: gentoo has no /etc/sudoers.d even after installing sudo
             if ! [ -d "$os_dir/etc/sudoers.d" ]; then
                 install -d -m 0750 "$os_dir/etc/sudoers.d"
             fi
 
-            # sudo: 添加单个用户 NOPASSWD
+            # sudo: add a single NOPASSWD user
             # https://wiki.archlinux.org/title/Sudo#Sudoers_default_file_permissions
             local file="$os_dir/etc/sudoers.d/99-$username"
             printf '%s\n' "$username ALL=(ALL) NOPASSWD:ALL" >"$file"
@@ -3851,8 +3851,8 @@ change_user_password() {
             # -password   optional    pam_gnome_keyring.so use_authtok
             # password   substack     postlogin
 
-            # 通过 /etc/pam.d/chpasswd 找到 /etc/pam.d/system-auth 或者 /etc/pam.d/system-auth
-            # 再找到有 password 和 pam_unix.so 的行，并删除 use_authtok，写入 /etc/pam.d/chpasswd
+            # follow /etc/pam.d/chpasswd to /etc/pam.d/system-auth,
+            # then find the line with password and pam_unix.so, drop use_authtok and write it to /etc/pam.d/chpasswd
             files=$(grep -E '^(password|@include)' $pam_d/chpasswd | awk '{print $NF}' | sort -u)
             for file in $files; do
                 if [ -f "$pam_d/$file" ] && line=$(grep ^password "$pam_d/$file" | grep -F pam_unix.so); then
@@ -3862,7 +3862,7 @@ change_user_password() {
             done
         fi
 
-        # 分两行写，不然遇到错误不会终止
+        # write it as two lines, otherwise an error would not stop execution
         plaintext=$(get_password_plaintext)
         printf '%s\n' "$username:$plaintext" | chroot $os_dir chpasswd
 
@@ -3878,27 +3878,27 @@ disable_selinux() {
     local os_dir=$1
 
     # https://access.redhat.com/solutions/3176
-    # centos7 也建议将 selinux 开关写在 cmdline
+    # centos7 also recommends putting the selinux switch on the cmdline
     # grep selinux=0 /usr/lib/dracut/modules.d/98selinux/selinux-loadpolicy.sh
     #     warn "To disable selinux, add selinux=0 to the kernel command line."
     if [ -f $os_dir/etc/selinux/config ]; then
         sed -i 's/^SELINUX=enforcing/SELINUX=disabled/g' $os_dir/etc/selinux/config
     fi
 
-    # opensuse 没有安装 grubby
+    # opensuse does not install grubby
     if is_have_cmd_on_disk $os_dir grubby; then
-        # grubby 只处理 GRUB_CMDLINE_LINUX，不会处理 GRUB_CMDLINE_LINUX_DEFAULT
-        # rocky 的 GRUB_CMDLINE_LINUX_DEFAULT 有 crashkernel=auto
+        # grubby only handles GRUB_CMDLINE_LINUX, not GRUB_CMDLINE_LINUX_DEFAULT
+        # rocky has crashkernel=auto in GRUB_CMDLINE_LINUX_DEFAULT
         chroot $os_dir grubby --update-kernel ALL --args selinux=0
 
-        # el7 上面那条 grubby 命令不能设置 /etc/default/grub
+        # on el7 the grubby command above cannot set /etc/default/grub
         sed -i 's/selinux=1/selinux=0/' $os_dir/etc/default/grub
     else
-        # 有可能没有 selinux 参数，但现在的镜像没有这个问题
+        # there may be no selinux parameter, though current images do not have this problem
         # sed -Ei 's/[[:space:]]?(security|selinux|enforcing)=[^ ]*//g' $os_dir/etc/default/grub
         sed -i 's/selinux=1/selinux=0/' $os_dir/etc/default/grub
 
-        # 如果需要用 snapshot 可以用 transactional-update grub.cfg
+        # transactional-update grub.cfg can be used when a snapshot is needed
         chroot $os_dir grub2-mkconfig -o /boot/grub2/grub.cfg
     fi
 }
@@ -3906,19 +3906,19 @@ disable_selinux() {
 disable_kdump() {
     local os_dir=$1
 
-    # grubby 只处理 GRUB_CMDLINE_LINUX，不会处理 GRUB_CMDLINE_LINUX_DEFAULT
-    # rocky 的 GRUB_CMDLINE_LINUX_DEFAULT 有 crashkernel=auto
+    # grubby only handles GRUB_CMDLINE_LINUX, not GRUB_CMDLINE_LINUX_DEFAULT
+    # rocky has crashkernel=auto in GRUB_CMDLINE_LINUX_DEFAULT
 
-    # 新安装的内核依然有 crashkernel，好像是 bug
+    # a freshly installed kernel still has crashkernel, which looks like a bug
     # https://forums.rockylinux.org/t/how-do-i-remove-crashkernel-from-cmdline/13346
-    # 验证过程
-    # yum remove --oldinstallonly   # 删除旧内核
-    # rm -rf /boot/loader/entries/* # 删除启动条目
-    # yum reinstall kernel-core     # 重新安装新内核
-    # cat /boot/loader/entries/*    # 依然有 crashkernel=1G-4G:192M,4G-64G:256M,64G-:512M
+    # how this was verified:
+    # yum remove --oldinstallonly   # remove the old kernels
+    # rm -rf /boot/loader/entries/* # remove the boot entries
+    # yum reinstall kernel-core     # reinstall the new kernel
+    # cat /boot/loader/entries/*    # still has crashkernel=1G-4G:192M,4G-64G:256M,64G-:512M
 
     chroot $os_dir grubby --update-kernel ALL --args crashkernel=no
-    # el7 上面那条 grubby 命令不能设置 /etc/default/grub
+    # on el7 the grubby command above cannot set /etc/default/grub
     sed -i 's/crashkernel=[^ "]*/crashkernel=no/' $os_dir/etc/default/grub
     if chroot $os_dir systemctl -q is-enabled kdump; then
         chroot $os_dir systemctl disable kdump
@@ -3934,12 +3934,12 @@ download_qcow() {
 
     qcow_file=/installer/cloud_image.qcow2
     if [ -n "$img_type_warp" ]; then
-        # 边下载边解压，单线程下载
-        # 用官方 wget ，带进度条
+        # decompress while downloading, single-threaded
+        # use the real wget for its progress bar
         apk add wget
         wget $img -O- | pipe_extract >$qcow_file
     else
-        # 多线程下载
+        # multi-threaded download
         download "$img" "$qcow_file"
     fi
 }
@@ -3948,7 +3948,7 @@ connect_qcow() {
     modprobe nbd nbds_max=1
     qemu-nbd -c /dev/nbd0 $qcow_file
 
-    # 需要等待一下
+    # a short wait is needed
     # https://github.com/canonical/cloud-utils/blob/main/bin/mount-image-callback
     while ! blkid /dev/nbd0; do
         echo "Waiting for qcow file to be mounted..."
@@ -3960,7 +3960,7 @@ disconnect_qcow() {
     if [ -f /sys/block/nbd0/pid ]; then
         qemu-nbd -d /dev/nbd0
 
-        # 需要等待一下
+        # a short wait is needed
         while fuser -sm $qcow_file; do
             echo "Waiting for qcow file to be unmounted..."
             sleep 5
@@ -3972,22 +3972,22 @@ get_part_size_mb_for_file_size_b() {
     local file_b=$1
     local file_mb=$((file_b / 1024 / 1024))
 
-    # ext4 默认参数下
-    #  分区大小   可用大小   利用率
+    # with the default ext4 parameters:
+    #  partition   usable     efficiency
     #  100 MiB      86 MiB   86.0%
     #  200 MiB     177 MiB   88.5%
     #  500 MiB     454 MiB   90.8%
     #  512 MiB     476 MiB   92.9%
     # 1024 MiB     957 MiB   93.4%
     # 2000 MiB    1914 MiB   95.7%
-    # 2048 MiB    1929 MiB   94.1% 这里反而下降了
+    # 2048 MiB    1929 MiB   94.1% note this actually drops
     # 5120 MiB    4938 MiB   96.4%
 
-    # 文件系统大约占用 5% 空间
+    # the filesystem takes roughly 5% of the space
 
-    # 假设 1929M 的文件，计算得到需要创建 2031M 的分区
-    # 但是实测 2048M 的分区才能存放 1929M 的文件
-    # 因此预留不足 150M 时补够 150M
+    # for a 1929M file the calculation suggests a 2031M partition,
+    # but in practice a 2048M partition is needed to hold a 1929M file
+    # so top the reserve up to 150M whenever it is less than that
     local reserve_mb=$((file_mb * 100 / 95 - file_mb))
     if [ $reserve_mb -lt 150 ]; then
         reserve_mb=150
@@ -4029,14 +4029,14 @@ get_cloud_image_part_size() {
     # https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img 500m
     # https://gentoo.osuosl.org/experimental/amd64/openstack/gentoo-openstack-amd64-systemd-latest.qcow2 800m
 
-    # openeuler 是 .qcow2.xz，要解压后才知道 qcow2 大小
+    # openeuler ships .qcow2.xz, so the qcow2 size is only known after decompression
     if [ "$distro" = openeuler ]; then
         echo 3GiB
     elif size_bytes=$(get_http_file_size "$img"); then
-        # 缩小 btrfs 需要写 qcow2 ，实测写入后只多了 1M，因此不用特殊处理
+        # shrinking btrfs writes to the qcow2; in practice it only grows by 1M, so no special handling is needed
         echo "$(get_part_size_mb_for_file_size_b $size_bytes)MiB"
     else
-        # 如果没获取到文件大小
+        # if the file size could not be determined
         echo "Could not get cloud image size in http response." >&2
         echo 2GiB
     fi
@@ -4064,19 +4064,19 @@ chroot_apt_install() {
     local os_dir=$1
     shift
 
-    # 只安装未安装的软件包
-    # 避免更新浪费时间
+    # Only install packages that are not present,
+    # to avoid wasting time on upgrades
     local pkg='' pkgs=''
     for pkg in "$@"; do
         if chroot $os_dir dpkg -s "$pkg" >/dev/null 2>&1; then
-            # 如果已安装则标记为 manual，防止被 autoremove 删除
+            # if already installed, mark it manual so autoremove does not drop it
             chroot $os_dir apt-mark manual "$pkg"
         else
             pkgs="$pkgs $pkg"
         fi
     done
 
-    # 一次性安装，避免多次 update-initramfs
+    # Install everything at once to avoid running update-initramfs repeatedly
     if [ -n "$pkgs" ]; then
         chroot_apt_update $os_dir
         DEBIAN_FRONTEND=noninteractive chroot $os_dir apt-get install -y $pkgs
@@ -4087,22 +4087,22 @@ chroot_apt_remove() {
     local os_dir=$1
     shift
 
-    # minimal 镜像 删除 grub-pc 时会安装 grub-efi-amd64
-    # 因此需要先更新索引
+    # on the minimal image, removing grub-pc installs grub-efi-amd64,
+    # so the index must be updated first
     chroot_apt_update $os_dir
 
-    # 不能用 apt remove --purge -y xxx yyy
-    # 因为如果索引里没有其中一个，会报错，另一个也不会删除
+    # apt remove --purge -y xxx yyy cannot be used,
+    # because if one of them is missing from the index it errors out and the other is not removed either
     local pkgs=
     for pkg in "$@"; do
-        # apt list 会提示 WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
-        # 但又不能用 apt-get list
+        # apt list warns: WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+        # but apt-get list does not exist
         if chroot $os_dir apt list --installed "$pkg" | grep -q installed; then
             pkgs="$pkgs $pkg"
         fi
     done
 
-    # 删除 resolvconf 时会弹出建议重启，因此添加 noninteractive
+    # removing resolvconf prompts to reboot, hence noninteractive
     DEBIAN_FRONTEND=noninteractive chroot $os_dir apt-get remove --purge --allow-remove-essential -y $pkgs
 }
 
@@ -4152,14 +4152,14 @@ is_el7_family() {
 del_exist_sysconfig_NetworkManager_config() {
     local os_dir=$1
 
-    # 删除云镜像自带的 dhcp 配置，防止歧义
+    # Remove the dhcp configuration shipped in the cloud image, to avoid ambiguity
     rm -rf $os_dir/etc/NetworkManager/system-connections/*.nmconnection
     rm -rf $os_dir/etc/sysconfig/network-scripts/ifcfg-*
 
-    # 1. 修复 cloud-init 添加了 IPV*_FAILURE_FATAL / may-fail=false
-    #    甲骨文 dhcpv6 获取不到 IP 将视为 fatal，原有的 ipv4 地址也会被删除
-    # 2. 修复 dhcpv6 下，ifcfg 添加了 IPV6_AUTOCONF=no 导致无法获取网关
-    # 3. 修复 dhcpv6 下，NM method=dhcp 导致无法获取网关
+    # 1. fix cloud-init adding IPV*_FAILURE_FATAL / may-fail=false
+    #    on Oracle, a dhcpv6 failure is treated as fatal and the existing ipv4 address is removed too
+    # 2. fix ifcfg adding IPV6_AUTOCONF=no under dhcpv6, which prevents obtaining a gateway
+    # 3. fix NM method=dhcp under dhcpv6, which prevents obtaining a gateway
     if false; then
         ci_file=$os_dir/etc/cloud/cloud.cfg.d/99_fallback.cfg
 
@@ -4183,40 +4183,40 @@ install_qcow_by_copy() {
         # resolv.conf
         cp_resolv_conf /os
 
-        # 部分镜像有默认配置，例如 centos
+        # some images ship a default configuration, e.g. centos
         del_exist_sysconfig_NetworkManager_config /os
 
-        # 删除镜像的默认账户，防止使用默认账户密码登录 ssh
+        # remove the default account from the image, so nobody can ssh in with its default password
         del_default_user /os
 
         # selinux kdump
         disable_selinux /os
         disable_kdump /os
 
-        # el7 删除 machine-id 后不会自动重建
+        # el7 does not recreate machine-id after it is removed
         clear_machine_id /os
 
-        # el7 forks 特殊处理
+        # special handling for the el7 forks
         if is_el7_family /os; then
-            # centos 7 eol 换源
+            # switch repos now that centos 7 is EOL
             if [ -f /os/etc/yum.repos.d/CentOS-Base.repo ]; then
-                # 保持默认的 http 因为自带的 ssl 证书可能过期
+                # keep the default http, because the bundled ssl certificate may have expired
                 mirror=vault.centos.org
                 sed -Ei -e 's,(mirrorlist=),#\1,' \
                     -e "s,#(baseurl=http://)mirror.centos.org,\1$mirror," /os/etc/yum.repos.d/CentOS-Base.repo
             fi
 
-            # el7 yum 可能会使用 ipv6，即使没有 ipv6 网络
+            # el7 yum may use ipv6 even when there is no ipv6 network
             if [ "$(cat /dev/netconf/*/ipv6_has_internet | sort -u)" = 0 ]; then
                 echo 'ip_resolve=4' >>/os/etc/yum.conf
             fi
 
-            # el7 安装 NetworkManager
-            # anolis 7 镜像自带 NetworkManager
+            # el7 installs NetworkManager
+            # the anolis 7 image ships NetworkManager
             if ! [ -f /os/usr/lib/systemd/system/NetworkManager.service ]; then
                 chroot_dnf install NetworkManager
             fi
-            # 服务不存在时会报错
+            # errors out when the service does not exist
             chroot /os systemctl disable network 2>/dev/null || true
             chroot /os systemctl enable NetworkManager
         fi
@@ -4226,69 +4226,69 @@ install_qcow_by_copy() {
             chroot_dnf install $fw_pkgs
         fi
 
-        # fstab 删除多余分区
-        # almalinux/rocky 镜像有 boot 分区
-        # oracle 镜像有 swap 分区
+        # Remove the extra partitions from fstab
+        # the almalinux/rocky images have a boot partition
+        # the oracle image has a swap partition
         sed -i '/[[:space:]]\/boot[[:space:]]/d' /os/etc/fstab
         sed -i '/[[:space:]]swap[[:space:]]/d' /os/etc/fstab
 
-        # os_part 变量:
+        # os_part variable:
         # mapper/vg_main-lv_root
         # mapper/opencloudos-root
 
-        # oracle/opencloudos 系统盘从 lvm 改成 uuid 挂载
+        # switch the oracle/opencloudos system disk from lvm to uuid mounting
         sed -i "s,/dev/$os_part,UUID=$os_part_uuid," /os/etc/fstab
         if ls /os/boot/loader/entries/*.conf 2>/dev/null; then
             # options root=/dev/mapper/opencloudos-root ro console=ttyS0,115200n8 no_timer_check net.ifnames=0 crashkernel=1800M-64G:256M,64G-128G:512M,128G-486G:768M,486G-972G:1024M,972G-:2048M rd.lvm.lv=opencloudos/root rhgb quiet
             sed -i "s,/dev/$os_part,UUID=$os_part_uuid," /os/boot/loader/entries/*.conf
         fi
 
-        # oracle/opencloudos 移除 lvm cmdline
+        # remove the lvm cmdline for oracle/opencloudos
         chroot /os grubby --update-kernel ALL --remove-args "resume rd.lvm.lv"
-        # el7 上面那条 grubby 命令不能设置 /etc/default/grub
+        # on el7 the grubby command above cannot set /etc/default/grub
         sed -i 's/rd.lvm.lv=[^ "]*//g' /os/etc/default/grub
 
-        # fstab 添加 efi 分区
+        # Add the efi partition to fstab
         if is_efi; then
-            # centos/oracle 要创建efi条目
+            # centos/oracle need an efi entry created
             if ! grep /boot/efi /os/etc/fstab; then
                 efi_part_uuid=$(lsblk "/dev/$(xda 1)" -no UUID)
                 echo "UUID=$efi_part_uuid /boot/efi vfat $efi_mount_opts 0 0" >>/os/etc/fstab
             fi
         else
-            # 删除 efi 条目
+            # remove the efi entry
             sed -i '/[[:space:]]\/boot\/efi[[:space:]]/d' /os/etc/fstab
         fi
 
         remove_grub_conflict_files() {
-            # bios 和 efi 转换前先删除
+            # delete it before converting between bios and efi
 
-            # bios转efi出错
-            # centos 和 oracle x86_64 镜像只有 bios 镜像，/boot/grub2/grubenv 是真身
-            # 安装grub-efi时，grubenv 会改成指向efi分区grubenv软连接
-            # 如果安装grub-efi前没有删除原来的grubenv，原来的grubenv将不变，新建的软连接将变成 grubenv.rpmnew
-            # 后续grubenv的改动无法同步到efi分区，会造成grub2-setdefault失效
+            # bios to efi failure:
+            # the centos and oracle x86_64 images are bios-only, and /boot/grub2/grubenv is the real file
+            # installing grub-efi turns grubenv into a symlink to the efi partition grubenv
+            # if the original grubenv is not removed first it stays put, and the new symlink becomes grubenv.rpmnew
+            # later grubenv changes then never reach the efi partition, breaking grub2-setdefault
 
-            # efi转bios出错
-            # 如果是指向efi目录的软连接（例如el8），先删除它，否则 grub2-install 会报错
+            # efi to bios failure:
+            # if it is a symlink into the efi directory (e.g. el8), remove it first or grub2-install errors out
             rm -rf /os/boot/grub2/grubenv /os/boot/grub2/grub.cfg
         }
 
-        # openeuler arm 镜像 grub.cfg 在 /os/grub.cfg，可能给外部的 grub 读取，我们用不到
-        # centos7 有 grub1 的配置
+        # the openeuler arm image has grub.cfg at /os/grub.cfg, probably for an external grub to read; we do not need it
+        # centos7 has a grub1 configuration
         rm -rf /os/grub.cfg /os/boot/grub/grub.conf /os/boot/grub/menu.lst
 
-        # 安装引导
+        # Install the bootloader
         if is_efi; then
-            # 只有centos 和 oracle x86_64 镜像没有efi，其他系统镜像已经从efi分区复制了文件
-            # openeuler 自带 grub2-efi-ia32，此时安装 grub2-efi 提示已经安装了 grub2-efi-ia32，不会继续安装 grub2-efi-x64
+            # only the centos and oracle x86_64 images lack efi; for other images the files were already copied from the efi partition
+            # openeuler ships grub2-efi-ia32, so installing grub2-efi reports grub2-efi-ia32 as already installed and never installs grub2-efi-x64
 
-            # 假设极端情况，qcow2 制作时，安装 grub2-efi-x64 时没有挂载 efi 分区，那么 efi 文件会在系统分区下
-            # 但我们复制系统分区时挂载了 /boot/efi，因此 efi 文件会正确地复制到 efi 分区
-            # 因此无需判断 qcow2 的 efi 是否是独立分区
+            # in the extreme case where the qcow2 was built with grub2-efi-x64 installed without the efi partition mounted, the efi files end up on the system partition
+            # but we mount /boot/efi when copying the system partition, so the efi files are copied to the efi partition correctly
+            # so there is no need to check whether the qcow2 efi is a separate partition
 
-            # rhel 镜像没有源，直接 yum install 安装可能会报错
-            # 因此如果已经安装了要用的包就不再运行 yum install
+            # the rhel image has no repositories, so a plain yum install may fail
+            # therefore skip yum install when the required package is already present
             need_install=false
             need_remove_grub_conflict_files=false
 
@@ -4306,8 +4306,8 @@ install_qcow_by_copy() {
                 fi
                 chroot_dnf install efibootmgr grub2-efi-$arch shim-$arch
             fi
-            # openeuler arm 25.09 云镜像里面的 grubaa64.efi 是用于 mbr 分区表，$root 是 hd0,msdos1
-            # 因此要重新下载 $root 是 hd0,gpt1 的 grubaa64.efi
+            # the grubaa64.efi inside the openeuler arm 25.09 cloud image targets an mbr table, where $root is hd0,msdos1
+            # so re-download a grubaa64.efi whose $root is hd0,gpt1
             if $need_reinstall_grub_efi; then
                 chroot_dnf reinstall grub2-efi-$arch
             fi
@@ -4317,31 +4317,31 @@ install_qcow_by_copy() {
             chroot /os/ grub2-install /dev/$xda
         fi
 
-        # blscfg 启动项
-        # rocky/almalinux镜像是独立的boot分区，但我们不是
-        # 因此要添加boot目录
+        # blscfg boot entries
+        # the rocky/almalinux images have a separate boot partition, but we do not,
+        # so the boot directory must be added
         if ls /os/boot/loader/entries/*.conf 2>/dev/null &&
             ! grep -q 'initrd /boot/' /os/boot/loader/entries/*.conf; then
 
             sed -i -E 's,((linux|initrd) /),\1boot/,g' /os/boot/loader/entries/*.conf
         fi
 
-        # grub-efi-x64 包里面有 /etc/grub2-efi.cfg
-        # 指向 /boot/efi/EFI/xxx/grub.cfg 或 /boot/grub2/grub.cfg
-        # 指向哪里哪里就是 grub2-mkconfig 应该生成文件的位置
-        # grubby 也是靠 /etc/grub2-efi.cfg 定位 grub.cfg 的位置
-        # openeuler 24.03 x64 aa64 指向的文件不同
+        # the grub-efi-x64 package contains /etc/grub2-efi.cfg
+        # pointing at /boot/efi/EFI/xxx/grub.cfg or /boot/grub2/grub.cfg
+        # wherever it points is where grub2-mkconfig should write its output
+        # grubby also uses /etc/grub2-efi.cfg to locate grub.cfg
+        # openeuler 24.03 x64 and aa64 point at different files
         if is_efi; then
             grub_o_cfg=$(chroot /os readlink -f /etc/grub2-efi.cfg)
         else
             grub_o_cfg=/boot/grub2/grub.cfg
         fi
 
-        # efi 分区 grub.cfg
+        # efi partition grub.cfg
         # https://github.com/rhinstaller/anaconda/blob/346b932a26a19b339e9073c049b08bdef7f166c3/pyanaconda/modules/storage/bootloader/efi.py#L198
         # https://github.com/rhinstaller/anaconda/commit/15c3b2044367d375db6739e8b8f419ef3e17cae7
         if is_efi && ! echo "$grub_o_cfg" | grep -q '/boot/efi/EFI'; then
-            # oracle linux 文件夹是 redhat
+            # the oracle linux folder is called redhat
             # shellcheck disable=SC2010
             distro_efi=$(cd /os/boot/efi/EFI/ && ls -d -- * | grep -Eiv BOOT)
             cat <<EOF >/os/boot/efi/EFI/$distro_efi/grub.cfg
@@ -4352,7 +4352,7 @@ configfile \$prefix/grub.cfg
 EOF
         fi
 
-        # 主 grub.cfg
+        # main grub.cfg
         if ls /os/boot/loader/entries/*.conf >/dev/null 2>&1 &&
             chroot /os/ grub2-mkconfig --help | grep -q update-bls-cmdline; then
             chroot /os/ grub2-mkconfig -o "$grub_o_cfg" --update-bls-cmdline
@@ -4360,47 +4360,47 @@ EOF
             chroot /os/ grub2-mkconfig -o "$grub_o_cfg"
         fi
 
-        # 网络配置
+        # Network configuration
         # el7/8 sysconfig
         # el9 network-manager
         if [ -f $os_dir/etc/sysconfig/network-scripts/ifup-eth ]; then
             # sysconfig
             info 'sysconfig'
 
-            # anolis/openeuler/opencloudos 可能要安装 cloud-init
-            # opencloudos 无法使用 chroot $os_dir command -v xxx
+            # anolis/openeuler/opencloudos may need cloud-init installed
+            # opencloudos cannot use chroot $os_dir command -v xxx
             # chroot: failed to run command ‘command’: No such file or directory
-            # 注意还要禁用 cloud-init 服务
+            # note the cloud-init service must be disabled as well
             if ! is_have_cmd_on_disk $os_dir cloud-init; then
                 chroot_dnf install cloud-init
             fi
 
-            # cloud-init 路径
+            # cloud-init path
             # /usr/lib/python2.7/site-packages/cloudinit/net/
             # /usr/lib/python3/dist-packages/cloudinit/net/
             # /usr/lib/python3.9/site-packages/cloudinit/net/
 
-            # el7 不认识 static6，但可改成 static，作用相同
+            # el7 does not know static6, but static works the same way
             recognize_static6=true
             if ls $os_dir/usr/lib/python*/*-packages/cloudinit/net/sysconfig.py 2>/dev/null &&
                 ! grep -q static6 $os_dir/usr/lib/python*/*-packages/cloudinit/net/sysconfig.py; then
                 recognize_static6=false
             fi
 
-            # cloud-init 20.1 才支持以下配置
+            # the configuration below needs cloud-init 20.1 or newer
             # https://cloudinit.readthedocs.io/en/20.4/topics/network-config-format-v1.html#subnet-ip
             # https://cloudinit.readthedocs.io/en/21.1/topics/network-config-format-v1.html#subnet-ip
             # ipv6_dhcpv6-stateful: Configure this interface with dhcp6
             # ipv6_dhcpv6-stateless: Configure this interface with SLAAC and DHCP
             # ipv6_slaac: Configure address with SLAAC
 
-            # el7 最新 cloud-init 版本
-            # centos 7         19.4-7.0.5.el7_9.6  backport 了 ipv6_xxx
-            # openeuler 20.03  19.4-15.oe2003sp4   backport 了 ipv6_xxx
-            # anolis 7         19.1.17-1.0.1.an7   没有更新到 centos7 相同版本,也没 backport ipv6_xxx，坑
+            # newest cloud-init version on el7
+            # centos 7         19.4-7.0.5.el7_9.6  has ipv6_xxx backported
+            # openeuler 20.03  19.4-15.oe2003sp4   has ipv6_xxx backported
+            # anolis 7         19.1.17-1.0.1.an7   not updated to the centos7 version and no ipv6_xxx backport, a trap
 
-            # 最好还修改 ifcfg-eth* 的 IPV6_AUTOCONF
-            # 但实测 anolis7 cloud-init dhcp6 不会生成 IPV6_AUTOCONF，因此暂时不管
+            # ideally IPV6_AUTOCONF in ifcfg-eth* would also be changed,
+            # but in practice anolis7 cloud-init dhcp6 does not generate IPV6_AUTOCONF, so leave it for now
             # https://www.redhat.com/zh/blog/configuring-ipv6-rhel-7-8
             recognize_ipv6_types=true
             if ls -d $os_dir/usr/lib/python*/*-packages/cloudinit/net/ 2>/dev/null &&
@@ -4408,19 +4408,19 @@ EOF
                 recognize_ipv6_types=false
             fi
 
-            # 生成 cloud-init 网络配置
+            # Generate the cloud-init network configuration
             create_cloud_init_network_config $os_dir/net.cfg "$recognize_static6" "$recognize_ipv6_types"
 
-            # 转换成目标系统的网络配置
+            # Convert it to the target system network configuration
             chroot $os_dir cloud-init devel net-convert \
                 -p /net.cfg -k yaml -d out -D rhel -O sysconfig
             cp $os_dir/out/etc/sysconfig/network-scripts/ifcfg-eth* $os_dir/etc/sysconfig/network-scripts/
 
-            # 清理
+            # Clean up
             rm -rf $os_dir/net.cfg $os_dir/out
 
-            # 删除 # Created by cloud-init on instance boot automatically, do not edit.
-            # 修正网络配置问题并显示文件
+            # remove "# Created by cloud-init on instance boot automatically, do not edit."
+            # fix the network configuration issues and show the file
             sed -i -e '/^IPV[46]_FAILURE_FATAL=/d' -e '/^#/d' $os_dir/etc/sysconfig/network-scripts/ifcfg-*
             for file in "$os_dir/etc/sysconfig/network-scripts/ifcfg-"*; do
                 if grep -q '^DHCPV6C=yes' "$file"; then
@@ -4435,11 +4435,11 @@ EOF
             create_cloud_init_network_config /net.cfg
             create_network_manager_config /net.cfg "$os_dir"
 
-            # 清理
+            # Clean up
             rm /net.cfg
         fi
 
-        # 不删除可能网络管理器不会写入dns
+        # without removing it the network manager may not write dns
         rm_resolv_conf /os
     }
 
@@ -4449,22 +4449,22 @@ EOF
 
         cp_resolv_conf $os_dir
 
-        # 关闭 os prober，因为 os prober 有时很慢
+        # turn os-prober off, because it is sometimes very slow
         cp $os_dir/etc/default/grub $os_dir/etc/default/grub.orig
         echo 'GRUB_DISABLE_OS_PROBER=true' >>$os_dir/etc/default/grub
 
-        # 更改源
+        # Change the repositories
 
-        # 避免 do-release-upgrade 时自动执行 dpkg-reconfigure grub-xx 但是 efi/biosgrub 分区不存在而导致报错
+        # stop do-release-upgrade auto-running dpkg-reconfigure grub-xx and failing because the efi/biosgrub partition does not exist
         # shellcheck disable=SC2046
         chroot_apt_remove $os_dir $(is_efi && echo 'grub-pc' || echo 'grub-efi*' 'shim*')
         chroot_apt_autoremove $os_dir
 
-        # 安装 mbr
+        # Install the mbr
         if ! is_efi; then
             if false; then
                 # debconf-show grub-pc
-                # 每次开机硬盘名字可能不一样，但是 debian netboot 安装后也是设置了 grub-pc/install_devices
+                # the disk name can differ between boots, but a debian netboot install also sets grub-pc/install_devices
                 echo grub-pc grub-pc/install_devices multiselect /dev/$xda | chroot $os_dir debconf-set-selections # 22.04
                 echo grub-pc grub-pc/cloud_style_installation boolean true | chroot $os_dir debconf-set-selections # 24.04
                 chroot $os_dir dpkg-reconfigure -f noninteractive grub-pc
@@ -4473,26 +4473,26 @@ EOF
             fi
         fi
 
-        # 自带内核：
-        # 常规版本             generic
-        # minimal 20.04/22.04 kvm      # 后台 vnc 无显示
+        # bundled kernels:
+        # normal releases        generic
+        # minimal 20.04/22.04    kvm      # nothing shown on the vnc console
         # minimal 24.04       virtual
 
-        # debian cloud 内核不支持 ahci，ubuntu virtual 支持
+        # the debian cloud kernel has no ahci support; the ubuntu virtual one does
 
-        # 标记所有内核为自动安装
-        # 注意排除 linux-base
-        # 返回值始终为 0
+        # Mark every kernel as automatically installed
+        # note that linux-base must be excluded
+        # this always exits 0
         pkgs=$(chroot $os_dir apt-mark showmanual \
             linux-generic linux-virtual linux-kvm \
             linux-image* linux-headers*)
         chroot $os_dir apt-mark auto $pkgs
 
-        # 安装最佳内核
+        # Install the best kernel
         flavor=$(get_ubuntu_kernel_flavor)
         echo "Use kernel flavor: $flavor"
 
-        # 题外话
+        # side note
         # 如果某个包是 auto 状态且有更新
         # 则 apt install PKG 只会进行更新，不会将包设置成 manual
         # 需要再次运行 apt install PKG 才会将包设置成 manual

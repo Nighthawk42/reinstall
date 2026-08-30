@@ -2778,19 +2778,19 @@ add_efi_entry_in_windows() {
 }
 
 get_maybe_efi_dirs_in_linux() {
-    # 不从 fstab 查找，因为极端情况下可能只用 systemd mount
-    # arch云镜像efi分区挂载在/efi，且使用 autofs，mount 命令会有两个 /efi 条目
+    # do not read fstab: in extreme cases only a systemd mount may be used
+    # the arch cloud image mounts the efi partition at /efi via autofs, so mount lists /efi twice
 
     install_pkg findmnt >&2
 
-    # 寻找 efi 分区，并输出根目录
+    # Find the efi partition and print its root directory
     # root_dirs=$(mount | awk '$5=="vfat" || $5=="autofs" {print $3}' | grep -Ex '/efi|/boot/efi|/boot' | sort -u)
     root_dirs=$(findmnt -t fat,vfat -n -o TARGET | grep -Ex '/efi|/boot/efi|/boot' | sort -u)
 
     efi_dirs=$(
         for dir in $root_dirs; do
-            # 只显示有 efi 文件的
-            # -quit 表示找到第一个 *.efi 就立即退出 find
+            # only show those that actually contain efi files
+            # -quit makes find stop at the first *.efi
             if [ -d "$dir" ]; then
                 find "$dir" -type f -iname "*.efi" -exec printf '%s\n' "$dir" \; -quit
             fi
@@ -2827,12 +2827,12 @@ grep_efi_entry() {
     # MirroredPercentageAbove4G: 0.00
     # MirrorMemoryBelow4GB: false
 
-    # 根据文档，* 表示 active，也就是说有可能没有*(代表inactive)
+    # per the docs, * marks active, which means there may be no * at all (inactive)
     # https://manpages.debian.org/testing/efibootmgr/efibootmgr.8.en.html
     grep -E '^Boot[0-9a-fA-F]{4}'
 }
 
-# trans.sh 有同名方法
+# trans.sh has a function of the same name
 grep_efi_index() {
     awk '{print $1}' | sed -e 's/Boot//' -e 's/\*//'
 }
@@ -2857,21 +2857,21 @@ add_efi_entry_in_linux() {
 
     install_pkg efibootmgr
 
-    # 只取第一个
-    # 因为不用关心是否为 efi 分区，只要是 fat/vfat 格式的分区即可添加到引导
-    # 这里用了管道导致 get_maybe_efi_dirs_in_linux 里面的 error_and_exit 不生效
+    # take only the first
+    # whether it is really an esp does not matter; any fat/vfat partition can be added to the boot entries
+    # the pipe here stops error_and_exit inside get_maybe_efi_dirs_in_linux from taking effect
     efi_part=$(get_maybe_efi_dirs_in_linux | head -1 | grep .)
     dist_dir=$efi_part/EFI/reinstall
     basename=$(basename $source)
     download_or_copy_file "$source" "$dist_dir/$basename"
 
-    # 原系统可能不是用 grub 引导，因此不一定有 grub-probe
+    # the original system may not boot with grub, so grub-probe may not exist
     if false; then
         grub_probe="$(command -v grub-probe grub2-probe | head -1)"
         dev_part="$("$grub_probe" -t device "$dist_dir")"
     else
         install_pkg findmnt
-        # arch findmnt 会得到
+        # on arch, findmnt returns
         # systemd-1
         # /dev/sda2
         dev_part=$(findmnt -T "$dist_dir" -no SOURCE | grep '^/dev/')
@@ -2903,24 +2903,24 @@ get_grub_efi_filename() {
 install_grub_linux_efi() {
     info 'download grub efi'
 
-    # fedora 39 的 efi 无法识别 opensuse tumbleweed 的 xfs
+    # the fedora 39 efi cannot read the opensuse tumbleweed xfs
     efi_distro=fedora
 
     grub_efi=$(get_grub_efi_filename)
 
-    # 不要用 download.opensuse.org 和 download.fedoraproject.org
-    # 因为 ipv6 访问有时跳转到 ipv4 地址，造成 ipv6 only 机器无法下载
-    # 日韩机器有时得到国内镜像源，但镜像源屏蔽了国外 IP 导致连不上
+    # do not use download.opensuse.org or download.fedoraproject.org
+    # because an ipv6 request sometimes redirects to an ipv4 address, which an ipv6-only machine cannot reach
+    # machines in Japan/Korea sometimes get a mirror that blocks foreign IPs
     # https://mirrors.bfsu.edu.cn/opensuse/ports/aarch64/tumbleweed/repo/oss/EFI/BOOT/grub.efi
 
-    # fcix 经常 404
+    # fcix 404s frequently
     # https://mirror.fcix.net/opensuse/tumbleweed/repo/oss/EFI/BOOT/bootx64.efi
     # https://mirror.fcix.net/opensuse/tumbleweed/appliances/openSUSE-Tumbleweed-Minimal-VM.x86_64-Cloud.qcow2
 
-    # dl.fedoraproject.org 不支持 ipv6
+    # dl.fedoraproject.org has no ipv6
 
     if [ "$efi_distro" = fedora ]; then
-        # fedora 43 efi 在 vultr 无法引导 debain 9/10 netboot
+        # the fedora 43 efi cannot boot debian 9/10 netboot on vultr
         fedora_ver=$(get_latest_distro_releasever fedora)
 
         mirror=https://d2lzkl7pfhq30w.cloudfront.net/pub/fedora/linux
@@ -2950,45 +2950,45 @@ download_and_extract_apk() {
     fi
     mkdir -p "$extract_dir"
 
-    # 屏蔽警告
+    # silence the warnings
     tar 2>&1 | grep -q BusyBox && tar_args= || tar_args=--warning=no-unknown-keyword
     curl -L "$mirror/v$alpine_ver/main/$basearch/$package_apk" | tar xz $tar_args -C "$extract_dir"
 }
 
 install_grub_win() {
-    # 下载 grub
+    # Download grub
     info download grub
 
     # https://wuyou.net/forum.php?mod=viewthread&tid=449379&extra=page%3D1&page=2
 
     # 2.14
-    # efi  正常
-    # bios 报错 ld.gold bug https://lists.gnu.org/archive/html/grub-devel/2026-01/msg00041.html
-    #      替换成 alpine/arch 的模块后，出现 ntfs 读取 out of range 错误
+    # efi  fine
+    # bios ld.gold bug https://lists.gnu.org/archive/html/grub-devel/2026-01/msg00041.html
+    #      after swapping in the alpine/arch modules, ntfs reads fail with out of range
 
     # 2.12
-    # efi  报错 __stack_chk_guard https://lists.gnu.org/archive/html/bug-grub/2024-01/msg00002.html
-    #      替换成 alpine/arch 的模块后，正常
-    # bios 正常
+    # efi  __stack_chk_guard error https://lists.gnu.org/archive/html/bug-grub/2024-01/msg00002.html
+    #      fine after swapping in the alpine/arch modules
+    # bios fine
 
     # 2.06
-    # 一切正常
+    # everything fine
 
-    # 要使用的 grub 版本
+    # the grub version to use
     if is_efi; then
         local grub_ver=2.14
     else
         local grub_ver=2.12
     fi
 
-    # grub 对应的 alpine 版本
+    # the alpine version matching that grub
     case "$grub_ver" in
     2.06) local alpine_ver=3.19 ;;
     2.12) local alpine_ver=3.23 ;;
     2.14) local alpine_ver=3.24 ;;
     esac
 
-    # grub 架构名和对应的 alpine 包名
+    # grub architecture names and the matching alpine package names
     if is_efi; then
         local alpine_grub_pkg=grub-efi
         case "$basearch" in
@@ -3000,17 +3000,17 @@ install_grub_win() {
         local grub_arch=i386-pc
     fi
 
-    # 是否需要从 alpine 获取/替换 grub 模块
-    # arm64-efi 要从 alpine 下载 grub 模块
+    # whether the grub modules need to be taken from alpine
+    # arm64-efi needs its grub modules downloaded from alpine
     local need_download_grub_module_from_alpine=false
     if [ "$grub_arch" = arm64-efi ]; then
         need_download_grub_module_from_alpine=true
     fi
 
-    # ftpmirror.gnu.org 是 geoip 重定向，不是 cdn
-    # 有可能重定义到一个拉黑了部分 IP 的服务器
+    # ftpmirror.gnu.org is a geoip redirect, not a CDN
+    # it may redirect to a server that blocks some IPs
 
-    # 换成 ftp.gnu.org?
+    # switch to ftp.gnu.org?
     grub_url=https://mirrors.kernel.org/gnu/grub/grub-$grub_ver-for-windows.zip
     curl -Lo $tmp/grub.zip $grub_url
     # unzip -qo $tmp/grub.zip
@@ -3018,28 +3018,28 @@ install_grub_win() {
     grub_dir=$tmp/grub-$grub_ver-for-windows
     grub=$grub_dir/grub
 
-    # 下载/替换 grub 模块
+    # Download / replace the grub modules
     if $need_download_grub_module_from_alpine; then
         info 'download grub modules from alpine'
         download_and_extract_apk $alpine_ver $alpine_grub_pkg $tmp/grub-from-alpine
         cp -r $tmp/grub-from-alpine/usr/lib/grub/$grub_arch/ $grub_dir
     fi
 
-    # 设置 grub 包含的模块
-    # 原系统是 windows，因此不需要 ext2 lvm xfs btrfs
+    # Choose the modules to build into grub
+    # the original system is windows, so ext2, lvm, xfs and btrfs are not needed
     grub_modules+=" normal minicmd serial ls echo test cat reboot halt linux chain search all_video configfile"
     grub_modules+=" scsi part_msdos part_gpt fat ntfs ntfscomp lzopio xzio gzio zstd"
     if ! is_efi; then
         grub_modules+=" biosdisk linux16"
     fi
 
-    # 设置 grub prefix 为c盘根目录
-    # 运行 grub-probe 会改变cmd窗口字体
+    # Set the grub prefix to the root of C:
+    # running grub-probe changes the cmd window font
     local prefix
     prefix=$($grub-probe -t drive $c: | sed 's|.*PhysicalDrive|(hd|' | del_cr)/
     echo $prefix
 
-    # 安装 grub
+    # Install grub
     if is_efi; then
         # efi
         info install grub for efi
@@ -3051,25 +3051,25 @@ install_grub_win() {
         # bios
         info install grub for bios
 
-        # bootmgr 加载 g2ldr 有大小限制
-        # 超过大小会报错 0xc000007b
-        # 解决方法1 g2ldr.mbr + g2ldr
-        # 解决方法2 生成少于64K的 g2ldr + 动态模块
+        # bootmgr limits the size of g2ldr
+        # exceeding it fails with 0xc000007b
+        # workaround 1: g2ldr.mbr + g2ldr
+        # workaround 2: build a g2ldr under 64K plus dynamic modules
         if false; then
             # g2ldr.mbr
-            # 部分国内机无法访问 ftp.cn.debian.org
+            # some machines cannot reach ftp.cn.debian.org
             host=deb.debian.org
             curl -LO http://$host/debian/tools/win32-loader/oldstable/win32-loader.exe
             7z x win32-loader.exe 'g2ldr.mbr' -o$tmp/win32-loader -r -y -bso0
             find $tmp/win32-loader -name 'g2ldr.mbr' -exec cp {} /cygdrive/$c/ \;
 
             # g2ldr
-            # 配置文件 c:\grub.cfg
+            # config file c:\grub.cfg
             $grub-mkimage -p "$prefix" -O $grub_arch -o "$(cygpath -w $grub_dir/core.img)" $grub_modules
             cat $grub_dir/$grub_arch/lnxboot.img $grub_dir/core.img >/cygdrive/$c/g2ldr
         else
-            # grub-install 无法设置 prefix
-            # 配置文件 c:\grub\grub.cfg
+            # grub-install cannot set the prefix
+            # config file c:\grub\grub.cfg
             $grub-install $c \
                 --target=$grub_arch \
                 --boot-directory=$c: \
@@ -3081,8 +3081,8 @@ install_grub_win() {
             cat $grub_dir/$grub_arch/lnxboot.img /cygdrive/$c/grub/$grub_arch/core.img >/cygdrive/$c/g2ldr
         fi
 
-        # 添加引导
-        # 脚本可能不是首次运行，所以先删除原来的
+        # Add the boot entry
+        # the script may have run before, so remove the old one first
         id='{1c41f649-1637-52f1-aea8-f96bfebeecc8}'
         bcdedit /enum all | grep -a $id && bcdedit /delete $id
         bcdedit /create $id /d "$(get_entry_name)" /application bootsector
@@ -3098,11 +3098,11 @@ find_grub_extlinux_cfg() {
     filename=$2
     keyword=$3
 
-    # 当 ln -s /boot/grub /boot/grub2 时
-    # find /boot/ 会自动忽略 /boot/grub2 里面的文件
+    # when /boot/grub is symlinked to /boot/grub2,
+    # find /boot/ silently skips the files inside /boot/grub2
     cfgs=$(
-        # 只要 $dir 存在
-        # 无论是否找到结果，返回值都是 0
+        # as long as $dir exists,
+        # the exit status is 0 whether or not anything was found
         find $dir \
             -type f -name $filename \
             -exec grep -E -l "$keyword" {} \;
@@ -3116,12 +3116,12 @@ find_grub_extlinux_cfg() {
     fi
 }
 
-# 空格、&、用户输入的网址要加引号，否则 grub 无法正确识别
+# Spaces, &, and user-supplied urls must be quoted or grub misreads them
 is_need_quote() {
     [[ "$1" = *' '* ]] || [[ "$1" = *'&'* ]] || [[ "$1" = http* ]]
 }
 
-# 转换 finalos_a=1 为 finalos.a=1 ，排除 finalos_mirrorlist
+# Convert finalos_a=1 into finalos.a=1, excluding finalos_mirrorlist
 build_finalos_cmdline() {
     if vars=$(compgen -v finalos_); then
         for key in $vars; do
@@ -3137,9 +3137,9 @@ build_finalos_cmdline() {
 }
 
 build_extra_cmdline() {
-    # 使用 extra_xxx=yyy 而不是 extra.xxx=yyy
-    # 因为 debian installer /lib/debian-installer-startup.d/S02module-params
-    # 会将 extra.xxx=yyy 写入新系统的 /etc/modprobe.d/local.conf
+    # use extra_xxx=yyy rather than extra.xxx=yyy
+    # because the debian installer /lib/debian-installer-startup.d/S02module-params
+    # writes extra.xxx=yyy into the new system's /etc/modprobe.d/local.conf
     # https://answers.launchpad.net/ubuntu/+question/249456
     # https://salsa.debian.org/installer-team/rootskel/-/blob/master/src/lib/debian-installer-startup.d/S02module-params?ref_type=heads
     for key in confhome hold force_boot_mode force_old_windows_setup cloud_image main_disk \
@@ -3153,14 +3153,14 @@ build_extra_cmdline() {
         fi
     done
 
-    # 指定最终安装系统的 mirrorlist，链接有&，在grub中是特殊字符，所以要加引号
+    # the mirrorlist for the final system; the url contains &, which is special in grub, so quote it
     if [ -n "$finalos_mirrorlist" ]; then
         extra_cmdline+=" extra_mirrorlist='$finalos_mirrorlist'"
     elif [ -n "$nextos_mirrorlist" ]; then
         extra_cmdline+=" extra_mirrorlist='$nextos_mirrorlist'"
     fi
 
-    # cloudcone 特殊处理
+    # cloudcone special case
     if is_grub_dir_linked; then
         finalos_cmdline+=" extra_link_grub_dir=1"
     fi
@@ -3190,20 +3190,20 @@ build_nextos_cmdline() {
     if [ $nextos_distro = alpine ]; then
         nextos_cmdline="alpine_repo=$nextos_repo modloop=$nextos_modloop"
     elif is_distro_like_debian $nextos_distro; then
-        # 设置分辨率为800*600，防止分辨率过高 ssh screen attach 后无法全部显示
-        # iso 默认有 vga=788
-        # 如果要设置位数: video=800x600-16
+        # set the resolution to 800x600, so a high resolution does not stop ssh screen attach showing everything
+        # the iso defaults to vga=788
+        # to set the colour depth: video=800x600-16
         nextos_cmdline="lowmem/low=1 auto=true priority=critical"
         # nextos_cmdline+=" vga=788 video=800x600"
         nextos_cmdline+=" url=$nextos_ks"
         nextos_cmdline+=" mirror/http/hostname=${nextos_udeb_mirror%/*}"
         nextos_cmdline+=" mirror/http/directory=/${nextos_udeb_mirror##*/}"
         nextos_cmdline+=" base-installer/kernel/image=$nextos_kernel"
-        # elts 的 debian 不能用 security 源，否则安装过程会提示无法访问
+        # debian elts cannot use the security repo, or the install reports it as unreachable
         if [ "$nextos_distro" = debian ] && is_debian_elts; then
             nextos_cmdline+=" apt-setup/services-select="
         fi
-        # kali 安装好后网卡是 eth0 这种格式，但安装时不是
+        # after kali is installed the NIC is named eth0, but not during installation
         if [ "$nextos_distro" = kali ]; then
             nextos_cmdline+=" net.ifnames=0"
             nextos_cmdline+=" simple-cdd/profiles=kali"
@@ -3215,12 +3215,12 @@ build_nextos_cmdline() {
 
     if is_distro_like_debian $nextos_distro; then
         if [ "$basearch" = "x86_64" ]; then
-            # debian installer 好像第一个 tty 是主 tty
-            # 设置ttyS0,tty0,安装界面还是显示在ttyS0
+            # in the debian installer the first tty seems to be the primary one
+            # with ttyS0,tty0 set, the installer UI still appears on ttyS0
             :
         else
-            # debian arm 在没有ttyAMA0的机器上（aws t4g），最少要设置一个tty才能启动
-            # 只设置tty0也行，但安装过程ttyS0没有显示
+            # on debian arm machines without ttyAMA0 (aws t4g), at least one tty must be set to boot
+            # tty0 alone works, but then nothing appears on ttyS0 during the install
             nextos_cmdline+=" $(echo_tmp_ttys)"
         fi
     else
@@ -3235,7 +3235,7 @@ build_cmdline() {
     build_nextos_cmdline
 
     # finalos
-    # trans 需要 finalos_distro 识别是安装 alpine 还是其他系统
+    # trans needs finalos_distro to know whether it is installing alpine or another system
     if [ "$distro" = alpine ]; then
         finalos_distro=alpine
     fi
@@ -3249,7 +3249,7 @@ build_cmdline() {
     cmdline="$nextos_cmdline $finalos_cmdline $extra_cmdline"
 }
 
-# 脚本可能多次运行，先清理之前的残留
+# The script may run several times, so clean up any leftovers first
 mkdir_clear() {
     local dir=$1
 
@@ -3257,8 +3257,8 @@ mkdir_clear() {
         return
     fi
 
-    # 再次运行时，有可能 mount 了 btrfs root，因此先要 umount_all
-    # 但目前不需要 mount ，因此用不到
+    # on a re-run a btrfs root may be mounted, so umount_all would be needed first,
+    # but nothing is mounted at this point, so it is not
     # umount_all "$dir"
     rm -rf "$dir"
     mkdir -p "$dir"
@@ -3266,11 +3266,11 @@ mkdir_clear() {
 
 mod_initrd_debian_kali() {
     # hack 1
-    # 允许设置 ipv4 onlink 网关
+    # allow setting an ipv4 onlink gateway
     sed -Ei 's,&&( onlink=),||\1,' etc/udhcpc/default.script
 
     # hack 2
-    # 强制使用 screen
+    # force the use of screen
     # shellcheck disable=SC1003,SC2016
     {
         echo 'if false && : \' | insert_into_file lib/debian-installer.d/S70menu before 'if [ -x "$bterm" ]' -F
@@ -3278,7 +3278,7 @@ mod_initrd_debian_kali() {
     }
 
     # hack 3
-    # 修改 /var/lib/dpkg/info/netcfg.postinst 运行我们的脚本
+    # patch /var/lib/dpkg/info/netcfg.postinst to run our script
     netcfg() {
         #!/bin/sh
         # shellcheck source=/dev/null
@@ -3287,10 +3287,10 @@ mod_initrd_debian_kali() {
 
         : get_ip_conf_cmd
 
-        # 运行 trans.sh，保存配置
+        # run trans.sh and save the configuration
         db_progress INFO base-installer/progress/netcfg
-        # 添加 || exit ，可以在 debian installer 不兼容 /trans.sh 语法时强制报错
-        # exit 不带参数，返回值为 || 前面命令的返回值
+        # the || exit forces a hard error if the debian installer cannot parse /trans.sh
+        # a bare exit returns the status of the command before ||
         sh /trans.sh || exit
         db_progress STEP 1
         db_progress STOP
@@ -3302,9 +3302,9 @@ mod_initrd_debian_kali() {
     # cat $postinst
 
     # hack 4
-    # 修改 udeb 依赖
+    # Patch the udeb dependencies
 
-    # 直接覆盖 net-retriever，方便调试
+    # overwrite net-retriever directly, which is easier to debug
     # curl -Lo /usr/lib/debian-installer/retriever/net-retriever $confhome/net-retriever
 
     change_priority() {
@@ -3322,9 +3322,9 @@ mod_initrd_debian_kali() {
                         fi
                     done
                 elif [[ "$package" = ata-modules* ]]; then
-                    # 改成强制安装
-                    # 因为是 pata-modules sata-modules scsi-modules 的依赖
-                    # 但我们没安装它们，也就不会自动安装 ata-modules
+                    # change it to a forced install
+                    # because it is a dependency of pata-modules, sata-modules and scsi-modules
+                    # which we do not install, so ata-modules would never be pulled in
                     line="Priority: standard"
                 fi
             fi
@@ -3380,15 +3380,15 @@ EOF
     # https://deb.debian.org/debian/pool/main/l/linux-signed-amd64/
     # https://deb.debian.org/debian/dists/bookworm/main/debian-installer/binary-all/Packages.xz
     # https://deb.debian.org/debian/dists/bookworm/main/debian-installer/binary-amd64/Packages.xz
-    # 以下是 debian-installer 有的驱动，这些驱动云内核不一定都有，(+)表示云内核有
-    # scsi-core-modules 默认安装（不用修改），是 ata-modules 的依赖
-    #                   包含 sd_mod.ko(+) scsi_mod.ko(+) scsi_transport_fc.ko(+) scsi_transport_sas.ko(+) scsi_transport_spi.ko(+)
-    # ata-modules       默认可选（改成必装），是下方模块的依赖。只有 ata_generic.ko(+) 和 libata.ko(+) 两个驱动
+    # the drivers below ship with debian-installer; the cloud kernel does not have them all, (+) marks the ones it does
+    # scsi-core-modules installed by default (leave alone), a dependency of ata-modules
+    #                   contains sd_mod.ko(+) scsi_mod.ko(+) scsi_transport_fc.ko(+) scsi_transport_sas.ko(+) scsi_transport_spi.ko(+)
+    # ata-modules       optional by default (make it mandatory), a dependency of the modules below. Only ata_generic.ko(+) and libata.ko(+)
 
-    # pata-modules      默认安装（改成可选），里面的驱动都是 pata_ 开头，但只有 pata_legacy.ko(+) 在云内核中
-    # sata-modules      默认安装（改成可选），里面的驱动大部分是 sata_ 开头的，其他重要的还有 ahci.ko libahci.ko ata_piix.ko(+)
-    #                   云内核没有 sata 模块，也没有内嵌，有一个 CONFIG_SATA_HOST=y，libata-$(CONFIG_SATA_HOST)	+= libata-sata.o
-    # scsi-modules      默认安装（改成可选），包含 nvme.ko(+) 和各种虚拟化驱动(+)
+    # pata-modules      installed by default (make it optional); its drivers are all pata_*, but only pata_legacy.ko(+) is in the cloud kernel
+    # sata-modules      installed by default (make it optional); mostly sata_*, plus the important ahci.ko libahci.ko ata_piix.ko(+)
+    #                   the cloud kernel has no sata module and none built in, only CONFIG_SATA_HOST=y, libata-$(CONFIG_SATA_HOST) += libata-sata.o
+    # scsi-modules      installed by default (make it optional); contains nvme.ko(+) and the various virtualization drivers(+)
 
     download_and_extract_deb() {
         local type=$1
@@ -3407,25 +3407,25 @@ EOF
             ;;
         esac
 
-        # 获取 deb/udeb 列表
+        # Get the deb/udeb list
         deb_list=$tmp/${type}_list
         if ! [ -f $deb_list ]; then
             curl -L "$url" | zcat | grep 'Filename:' | awk '{print $2}' >$deb_list
         fi
 
-        # 下载 deb/udeb
+        # Download the debs/udebs
         deb_path=$(grep -F "/${package}_" "$deb_list")
         curl -Lo $tmp/tmp.deb http://$mirror/"$deb_path"
 
         if false; then
-            # 使用 dpkg
-            # cygwin 没有 dpkg
+            # use dpkg
+            # cygwin has no dpkg
             install_pkg dpkg
             dpkg -x $tmp/tmp.deb $extract_dir
         else
-            # 使用 ar tar xz
-            # cygwin 需安装 binutils
-            # centos7 ar 不支持 --output
+            # use ar, tar and xz
+            # cygwin needs binutils installed
+            # ar on centos7 does not support --output
             install_pkg ar tar xz
             (cd $tmp && ar x $tmp/tmp.deb)
             tar xf $tmp/data.tar.xz -C $extract_dir
@@ -3433,22 +3433,22 @@ EOF
     }
 
     cp_debian_kali_driver() {
-        # debian 13 的 linux-image.deb 有 /usr/lib 没有 /lib
-        # debian 13 的 scsi-modules.udeb 没有 /usr/lib 有 /lib
+        # the debian 13 linux-image.deb has /usr/lib but no /lib
+        # the debian 13 scsi-modules.udeb has /lib but no /usr/lib
         local src_drivers_dir=$1/lib/modules/$kver/kernel/drivers
         if ! [ -d "$src_drivers_dir" ]; then
             local src_drivers_dir=$1/usr/lib/modules/$kver/kernel/drivers
         fi
         local extra_drivers=$2
-        # 各个版本的 debian/kali installer initrd 都有 /lib
+        # every version of the debian/kali installer initrd has /lib
         local dst_drivers_dir=$initrd_dir/lib/modules/$kver/kernel/drivers
 
         (
             cd $src_drivers_dir
             for driver in $extra_drivers; do
-                # debian 模块没有压缩
-                # kali 模块有压缩
-                # 因此要有 *
+                # debian modules are uncompressed
+                # kali modules are compressed
+                # hence the *
                 if ! find $dst_drivers_dir -name "$driver.ko*" | grep -q .; then
                     echo "adding driver: $driver"
                     file=$(find . -name "$driver.ko*" | grep .)
@@ -3458,17 +3458,17 @@ EOF
         )
     }
 
-    # 不用在 windows 判断是哪种硬盘控制器，因为 256M 运行 windows 只可能是 xp，而脚本本来就不支持 xp
-    # 在 debian installer 中判断能否用云内核
+    # no need to detect the disk controller on windows: 256M running windows can only be xp, which this script never supported
+    # decide inside the debian installer whether the cloud kernel can be used
     create_can_use_cloud_kernel_sh can_use_cloud_kernel.sh
 
-    # 下载 fix-eth-name 脚本
+    # Download the fix-eth-name script
     curl -LO "$confhome/fix-eth-name.sh"
     curl -LO "$confhome/fix-eth-name.service"
 
-    # 有段时间 kali initrd 删除了原版 wget
-    # 但 initrd 的 busybox wget 又不支持 https
-    # 因此改成在这里下载
+    # for a while the kali initrd dropped the real wget
+    # and the busybox wget in the initrd does not support https
+    # so download it here instead
     curl -LO "$confhome/get-xda.sh"
     curl -LO "$confhome/ttys.sh"
     if [ -n "$frpc_config" ]; then
@@ -3476,18 +3476,18 @@ EOF
         curl -LO "$confhome/frpc.service"
     fi
 
-    # 可以节省一点内存？
+    # saves a little memory?
     echo 'export DEBCONF_DROP_TRANSLATIONS=1' |
         insert_into_file lib/debian-installer/menu before 'exec debconf'
 
-    # 还原 kali netinst.iso 的 simple-cdd 机制
-    # 主要用于调用 kali.postinst 设置 zsh 为默认 shell
-    # 但 mini.iso 又没有这种机制
+    # Restore the simple-cdd mechanism of the kali netinst.iso
+    # mainly to invoke kali.postinst, which sets zsh as the default shell
+    # but mini.iso has no such mechanism
     # https://gitlab.com/kalilinux/build-scripts/kali-live/-/raw/main/kali-config/common/includes.installer/kali-finish-install?ref_type=heads
     # https://salsa.debian.org/debian/simple-cdd/-/blob/master/debian/14simple-cdd?ref_type=heads
     # https://http.kali.org/pool/main/s/simple-cdd/simple-cdd-profiles_0.6.9_all.udeb
     if [ "$distro" = kali ]; then
-        # 但我们没有使用 iso，因此没有 kali.postinst，需要另外下载
+        # we do not use the iso, so there is no kali.postinst and it must be downloaded separately
         mkdir -p cdrom/simple-cdd
         curl -Lo cdrom/simple-cdd/kali.postinst https://gitlab.com/kalilinux/build-scripts/kali-live/-/raw/main/kali-config/common/includes.installer/kali-finish-install?ref_type=heads
         chmod a+x cdrom/simple-cdd/kali.postinst
@@ -3497,20 +3497,20 @@ EOF
         curl -Lo usr/share/keyrings/debian-archive-keyring.gpg https://deb.freexian.com/extended-lts/archive-key.gpg
     fi
 
-    # 提前下载 sshd
-    # 以便在配置下载源之前就可以启动 sshd
+    # Download sshd early
+    # so it can be started before the repositories are configured
     mkdir_clear $tmp/sshd
     download_and_extract_deb udeb openssh-server-udeb $tmp/sshd
     cp -r $tmp/sshd/* .
 
-    # 提前下载 fdisk
-    # 因为 fdisk-udeb 包含 fdisk 和 sfdisk，提前下载可减少占用
+    # Download fdisk early
+    # fdisk-udeb contains both fdisk and sfdisk, so downloading it early saves space
     mkdir_clear $tmp/fdisk
     download_and_extract_deb udeb fdisk-udeb $tmp/fdisk
     cp -f $tmp/fdisk/usr/sbin/fdisk usr/sbin/
 
-    # 下载 websocketd
-    # debian 11+ 才有 websocketd
+    # Download websocketd
+    # only debian 11+ has websocketd
     if [ "$distro" = kali ] ||
         { [ "$distro" = debian ] && [ "$releasever" -ge 11 ]; }; then
         mkdir_clear $tmp/websocketd
@@ -3518,17 +3518,17 @@ EOF
         cp -f $tmp/websocketd/usr/bin/websocketd usr/bin/
     fi
 
-    # 提前下载 pci-hyperv
-    # udeb 没有这个模块 curl https://deb.debian.org/debian/dists/stable/main/Contents-udeb-amd64.gz | zcat | grep pci-hyperv
-    # 缺少这个模块 azure 会找不到 nvme 硬盘
-    # kali 的 pci-hyperv/pci-hyperv-intf 已嵌入到内核，不需要下载
+    # Download pci-hyperv early
+    # no udeb provides it: curl https://deb.debian.org/debian/dists/stable/main/Contents-udeb-amd64.gz | zcat | grep pci-hyperv
+    # without this module azure cannot find the nvme disk
+    # kali has pci-hyperv/pci-hyperv-intf built into the kernel, so no download is needed
 
-    # 用到 pci-hyperv 才需要下载，因为
-    # 1. azure 普通网卡、scsi 硬盘不需要这个模块
-    # 2. 没有这个模块会缺少加速网卡，但还有 hyperv 合成网卡，可以正常上网
+    # only download it when pci-hyperv is actually used, because
+    # 1. a normal azure NIC and scsi disk do not need it
+    # 2. without it the accelerated NIC is missing, but the hyperv synthetic NIC still provides network access
     if { is_in_windows && wmic PATH Win32_PnPEntity where "DeviceID like 'VMBUS\\\\{44C4F61D-4444-4400-9D52-802E27EDE19F}\\\\%'" | grep -q . ||
         [ -d /sys/module/pci_hyperv ]; } &&
-        # 可能在 host 或 controller 文件夹
+        # may live in the host or controller folder
         ! ls lib/modules/$kver/kernel/drivers/pci/*/pci-hyperv.ko* >/dev/null 2>&1 &&
         ! grep -Fq /pci-hyperv.ko lib/modules/$kver/modules.builtin; then
         mkdir_clear $tmp/linux-image-$kver
@@ -3536,13 +3536,13 @@ EOF
         cp_debian_kali_driver $tmp/linux-image-$kver pci-hyperv
     fi
 
-    # >256M 或者当前系统是 windows
+    # >256M, or the current system is windows
     if [ $ram_size -gt 256 ] || is_in_windows; then
         sed -i '/^pata-modules/d' $net_retriever
         sed -i '/^sata-modules/d' $net_retriever
         sed -i '/^scsi-modules/d' $net_retriever
     else
-        # <=256M 极限优化
+        # <=256M, squeeze everything
         find_main_disk
         extra_drivers=
         for driver in $(get_disk_drivers $xda); do
@@ -3550,27 +3550,27 @@ EOF
             case $driver in
             nvme)
                 extra_drivers+=" nvme nvme-core"
-                # debian 13+ / kali 有 nvme-auth 模块
-                # 添加后才能识别 nvme 硬盘
+                # debian 13+ / kali have an nvme-auth module
+                # which is required to detect nvme disks
                 if grep -q nvme-auth lib/modules/$kver/modules.order; then
                     extra_drivers+=" nvme-auth"
                 fi
                 ;;
-            # xen 的横杠特别不同
+            # the xen dash is unusual
             xen_blkfront) extra_drivers+=" xen-blkfront" ;;
             xen_scsifront) extra_drivers+=" xen-scsifront" ;;
             virtio_blk | virtio_scsi | hv_storvsc | vmw_pvscsi) extra_drivers+=" $driver" ;;
-            pata_legacy) sed -i '/^pata-modules/d' $net_retriever ;; # 属于 pata-modules
-            ata_piix) sed -i '/^sata-modules/d' $net_retriever ;;    # 属于 sata-modules
-            ata_generic) ;;                                          # 属于 ata-modules，不用处理，因为我们设置强制安装了 ata-modules
+            pata_legacy) sed -i '/^pata-modules/d' $net_retriever ;; # belongs to pata-modules
+            ata_piix) sed -i '/^sata-modules/d' $net_retriever ;;    # belongs to sata-modules
+            ata_generic) ;;                                          # belongs to ata-modules; nothing to do, since we force ata-modules to be installed
             esac
         done
 
         # extra drivers
-        # xen 还需要以下两个？
+        # does xen also need these two?
         # kernel/drivers/xen/xen-scsiback.ko
         # kernel/drivers/block/xen-blkback/xen-blkback.ko
-        # udeb 没有这个模块 curl https://deb.debian.org/debian/dists/stable/main/Contents-udeb-amd64.gz | zcat | grep xen
+        # no udeb provides it: curl https://deb.debian.org/debian/dists/stable/main/Contents-udeb-amd64.gz | zcat | grep xen
         if [ -n "$extra_drivers" ]; then
             mkdir_clear $tmp/scsi
             download_and_extract_deb udeb scsi-modules-$kver-di $tmp/scsi
@@ -3583,14 +3583,14 @@ EOF
     # 	level2=424 # MT=433340, qemu: -m 460
     # 	min=316    # MT=322748, qemu: -m 350
 
-    # 将 use_level 2 9 修改为 use_level 1
-    # x86 use_level 2 会出现 No root file system is defined.
-    # arm 即使 use_level 1 也会出现 No root file system is defined.
+    # Change use_level 2 and 9 to use_level 1
+    # on x86, use_level 2 produces "No root file system is defined."
+    # on arm, even use_level 1 produces "No root file system is defined."
     sed -i 's/use_level=[29]/use_level=1/' lib/debian-installer-startup.d/S15lowmem
 
     # hack 3
-    # 修改 trans.sh
-    # 1. 直接调用 create_ifupdown_config
+    # Patch trans.sh
+    # 1. call create_ifupdown_config directly
     # shellcheck disable=SC2154
     insert_into_file $initrd_dir/trans.sh after '^: main' <<EOF
         distro=$nextos_distro
@@ -3598,15 +3598,15 @@ EOF
         create_ifupdown_config /etc/network/interfaces
         exit
 EOF
-    # 2. 删除 debian busybox 无法识别的语法
-    # 3. 删除 apk 语句
-    # 4. debian 11/12 initrd 无法识别 > >
-    # 5. debian 11/12 initrd 无法识别 < < ，注意可能分两行写
-    # 6. debian 11 initrd 无法识别 set -E
-    # 7. debian 11 initrd 无法识别 trap ERR
-    # 8. debian 9 initrd 无法识别 ${string//find/replace}
-    # 9. debian 12 initrd 无法识别 . <(
-    # 删除或注释，可能会导致空方法而报错，因此改为替换成'\n: #'
+    # 2. remove syntax the debian busybox cannot parse
+    # 3. remove the apk statements
+    # 4. the debian 11/12 initrd cannot parse > >
+    # 5. the debian 11/12 initrd cannot parse < < , which may be split across two lines
+    # 6. the debian 11 initrd cannot parse set -E
+    # 7. the debian 11 initrd cannot parse trap ERR
+    # 8. the debian 9 initrd cannot parse ${string//find/replace}
+    # 9. the debian 12 initrd cannot parse . <(
+    # deleting or commenting out could leave an empty function and error, so replace with '\n: #'
     replace='\n: #'
     sed -Ei \
         -e "s/> >/$replace/" \
@@ -3620,8 +3620,8 @@ EOF
         -e "/^[[:space:]]*set[[:space:]]/s/E//" \
         $initrd_dir/trans.sh
 
-    # ubuntu 22.04 不支持这种语法，bash -n 会报错
-    # 因此不验证 trans.sh 的语法
+    # ubuntu 22.04 cannot parse this syntax and bash -n reports an error,
+    # so do not syntax-check trans.sh there
     # a=$(
     #     case 1 in
     #     1)
@@ -3639,7 +3639,7 @@ EOF
     #     esac
     # )
 
-    # 测试魔改后的 trans.sh 有没有语法问题
+    # Check the patched trans.sh for syntax errors
     # bash -n $initrd_dir/trans.sh
 }
 
@@ -3651,11 +3651,11 @@ get_net_drivers() {
     get_drivers "/sys/class/net/$1"
 }
 
-# 不用在 windows 判断是哪种硬盘/网络驱动，因为 256M 运行 windows 只可能是 xp，而脚本本来就不支持 xp
-# 而且安装过程也有二次判断
-# trans.sh 有同名方法
+# No need to detect the disk/network driver on windows: 256M running windows can only be xp, which this script never supported
+# and the install process checks again anyway
+# trans.sh has a function of the same name
 get_drivers() {
-    # 有以下结果组合出现
+    # the following result combinations occur
     # sd_mod
     # virtio_blk
     # virtio_scsi
@@ -3673,11 +3673,11 @@ get_drivers() {
         while ! [ "$(pwd)" = / ]; do
             if [ -d driver ]; then
                 if [ -d driver/module ]; then
-                    # 显示全名，例如 xen_blkfront sd_mod
-                    # 但 ahci 没有这个文件，所以 else 不能省略
+                    # shows the full name, e.g. xen_blkfront sd_mod
+                    # but ahci has no such file, so the else branch is required
                     basename "$(readlink -f driver/module)"
                 else
-                    # 不显示全名，例如 vbd sd
+                    # does not show the full name, e.g. vbd sd
                     basename "$(readlink -f driver)"
                 fi
             fi
@@ -3697,9 +3697,9 @@ exit_if_cant_use_cloud_kernel() {
 }
 
 can_use_cloud_kernel() {
-    # initrd 下也要使用，不要用 <<<
+    # also used inside the initrd, so do not use <<<
 
-    # 有些虚拟机用了 ahci，但云内核没有 ahci 驱动
+    # some VMs use ahci, but the cloud kernel has no ahci driver
     cloud_eth_modules='ena|gve|mana|virtio_net|xen_netfront|hv_netvsc|vmxnet3|mlx4_en|mlx4_core|mlx5_core|ixgbevf'
     cloud_blk_modules='ata_generic|ata_piix|pata_legacy|nvme|virtio_blk|virtio_scsi|xen_blkfront|xen_scsifront|hv_storvsc|vmw_pvscsi'
 
@@ -3712,7 +3712,7 @@ can_use_cloud_kernel() {
     echo "$drivers" | grep -Ewq "$cloud_blk_modules" || return 1
 
     # net
-    # v4 v6 eth 相同，只检查一次
+    # v4, v6 and eth are the same, so check only once
     if [ "$1" = "$2" ]; then
         shift
     fi
@@ -3754,7 +3754,7 @@ get_ip_conf_cmd() {
 }
 
 mod_initrd_alpine() {
-    # hack 1 v3.19 和之前的 virt 内核需添加 ipv6 模块
+    # hack 1: the v3.19 and earlier virt kernels need the ipv6 module added
     if virt_dir=$(ls -d $initrd_dir/lib/modules/*-virt 2>/dev/null); then
         ipv6_dir=$virt_dir/kernel/net/ipv6
         if ! [ -f $ipv6_dir/ipv6.ko ] && ! grep -q ipv6 $initrd_dir/lib/modules/*/modules.builtin; then
@@ -3763,7 +3763,7 @@ mod_initrd_alpine() {
             modloop_dir=$tmp/modloop_dir
             curl -Lo $modloop_file $nextos_modloop
             if is_in_windows; then
-                # cygwin 没有 unsquashfs
+                # cygwin has no unsquashfs
                 7z e $modloop_file ipv6.ko -r -y -o$ipv6_dir
             else
                 install_pkg unsquashfs
@@ -3774,13 +3774,13 @@ mod_initrd_alpine() {
         fi
     fi
 
-    # hack 下载 dhcpcd
+    # hack: download dhcpcd
     # shellcheck disable=SC2154
     download_and_extract_apk "$nextos_releasever" dhcpcd "$initrd_dir"
     sed -i -e '/^slaac private/s/^/#/' -e '/^#slaac hwaddr/s/^#//' $initrd_dir/etc/dhcpcd.conf
 
     # hack 2 /usr/share/udhcpc/default.script
-    # 脚本被调用的顺序
+    # the order in which the scripts are called
     # udhcpc:  deconfig
     # udhcpc:  bound
     # udhcpc6: deconfig
@@ -3801,7 +3801,7 @@ mod_initrd_alpine() {
     get_function_content udhcpc |
         insert_into_file usr/share/udhcpc/default.script after 'deconfig\|renew\|bound'
 
-    # 允许设置 ipv4 onlink 网关
+    # allow setting an ipv4 onlink gateway
     sed -Ei 's,(0\.0\.0\.0\/0),"\1 onlink",' usr/share/udhcpc/default.script
 
     # hack 3 网络配置

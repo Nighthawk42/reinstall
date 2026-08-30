@@ -1,14 +1,14 @@
 #!/bin/ash
 # shellcheck shell=dash
 # shellcheck disable=SC2086,SC3047,SC3036,SC3010,SC3001,SC3060,SC3015
-# alpine 默认使用 busybox ash
-# 注意 bash 和 ash 以下语句结果不同
+# alpine uses busybox ash by default
+# note that bash and ash give different results for the statement below
 # [[ a = '*a' ]] && echo 1
 
-# 出错后停止运行，将进入到登录界面，防止失联
+# Stop on error and drop to the login prompt, so the machine is not left unreachable
 set -eE
 
-# 用于判断 reinstall.sh 和 trans.sh 是否兼容
+# Used to check that reinstall.sh and trans.sh are compatible
 # shellcheck disable=SC2034
 SCRIPT_VERSION=4BACD833-A585-23BA-6CBB-9AA4E08E0004
 
@@ -58,11 +58,11 @@ error_and_exit() {
     echo "Run '$sudo_/trans.sh' to retry." >&2
     echo "Run '$sudo_/trans.sh alpine' to install Alpine Linux instead." >&2
 
-    # 解除锁定，允许用户登录处理故障
+    # unlock, so the user can log in and fix the problem
     # passwd -u "$username" >/dev/null
 
-    # 用不着，因为 alpine 锁定账户后无法登录 ssh
-    # 因此不会锁定
+    # not needed: a locked alpine account cannot log in over ssh anyway,
+    # so it is never locked
 
     exit 1
 }
@@ -83,11 +83,11 @@ is_run_from_locald() {
     [[ "$0" = "/etc/local.d/*" ]]
 }
 
-# reinstall.sh 有相同方法 add_community_repo_for_alpine
+# reinstall.sh has the same function, add_community_repo_for_alpine
 add_community_repo() {
     local ver mirror
 
-    # 先检查原来的 repo 是不是 edge 或者 latest-stable
+    # first check whether the existing repo is edge or latest-stable
     if grep -q "^http.*/edge/main$" /etc/apk/repositories; then
         ver=edge
     elif grep -q "^http.*/latest-stable/main$" /etc/apk/repositories; then
@@ -102,8 +102,8 @@ add_community_repo() {
     fi
 }
 
-# 有时网络问题下载失败，导致脚本中断
-# 因此需要重试
+# Network problems sometimes make a download fail and abort the script,
+# so retry
 apk() {
     retry 5 command apk "$@" >&2
 }
@@ -118,7 +118,7 @@ show_url_in_args() {
 }
 
 killall() {
-    # killall 是异步的，要等一下
+    # killall is asynchronous, so wait a moment
     local ret=0
     if ! command killall "$@"; then
         ret=$?
@@ -127,23 +127,23 @@ killall() {
     return $ret
 }
 
-# 在没有设置 set +o pipefail 的情况下，限制下载大小：
-# retry 5 command wget | head -c 1048576 会触发 retry，下载 5 次
-# command wget "$@" --tries=5 | head -c 1048576 不会触发 wget 自带的 retry，只下载 1 次
+# Without set +o pipefail, limiting the download size behaves as follows:
+# retry 5 command wget | head -c 1048576 triggers the retry and downloads 5 times
+# command wget "$@" --tries=5 | head -c 1048576 does not trigger wget\'s own retry and downloads once
 wget() {
     show_url_in_args "$@" >&2
     if command wget 2>&1 | grep -q BusyBox; then
-        # busybox wget 没有重试功能
-        # 好像默认永不超时
+        # busybox wget has no retry support
+        # and seems never to time out by default
         retry 5 command wget "$@" -T 10
     else
-        # 原版 wget 自带重试功能
+        # the real wget has retry support
         command wget --tries=5 --progress=bar:force "$@"
     fi
 }
 
 is_have_cmd() {
-    # command -v 包括脚本里面的方法
+    # command -v also finds functions defined in this script
     is_have_cmd_on_disk / "$1"
 }
 
@@ -180,8 +180,8 @@ retry() {
             return
         else
             ret=$?
-            # wget -O- | grep -m1 成功后会提前关闭管道，导致 141 错误
-            # 这是预期行为，因此需要排除
+            # wget -O- | grep -m1 closes the pipe early on success, causing error 141
+            # that is expected, so filter it out
             if [ $ret -eq 141 ]; then
                 return
             fi
@@ -209,12 +209,12 @@ create_alpine_rootfs() {
     local os_dir=$1
     local init_now=${2:-false}
 
-    # 复制当前系统的 /etc/apk 文件夹
+    # Copy the /etc/apk folder of the current system
     mkdir -p "$os_dir"
     cp -a --parents /etc/apk "$os_dir"
     rm -f "$os_dir/etc/apk/world"
 
-    # 安装 alpine
+    # Install alpine
     apk add --root "$os_dir" --initdb \
         alpine-base openssl ca-certificates
 
@@ -231,9 +231,9 @@ create_alpine_rootfs_with_arch_install_scripts() {
 
     create_alpine_rootfs "$os_dir" $init_now
 
-    # 将 alpine-base 的依赖写入 world，再删除 alpine-base alpine-conf
-    # --installed --depends 顺序不能错
-    # 不添加 --installed 则会同时显示已安装的和最新版的
+    # write the alpine-base dependencies into world, then remove alpine-base and alpine-conf
+    # the order of --installed and --depends matters
+    # without --installed it shows both the installed and the newest versions
     alpine_base_depends=$(chroot "$os_dir" apk info --installed --depends alpine-base | sed '/depends on:/d')
     chroot "$os_dir" apk add $alpine_base_depends
     chroot "$os_dir" apk del alpine-base alpine-conf
@@ -259,11 +259,11 @@ download_via_browser() {
     local os_dir=/os/alpine_for_browser
     mkdir_clear "$os_dir"
 
-    # 安装 chromium-headless-shell npm 到硬盘，减少内存占用
+    # install chromium-headless-shell and npm to disk to reduce memory use
     create_alpine_rootfs "$os_dir" true
     apk add --root "$os_dir" chromium-headless-shell npm
 
-    # 安装 playwright
+    # install playwright
     # shellcheck disable=SC2046
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
         chroot "$os_dir" \
@@ -272,13 +272,13 @@ download_via_browser() {
         --prefix "/work" \
         playwright
 
-    # 下载文件
+    # download the file
     # shellcheck disable=SC2154
     wget "$confhome/download-via-browser.js" -O "$os_dir/work/download-via-browser.js"
     retry 5 chroot "$os_dir" node /work/download-via-browser.js "$url" "/work/download_file"
     cp "$os_dir/work/download_file" "$path"
 
-    # 清理
+    # clean up
     remove_alpine_rootfs "$os_dir"
 }
 
@@ -286,21 +286,21 @@ download() {
     local url=$1
     local path=$2
 
-    # 有ipv4地址无ipv4网关的情况下，aria2可能会用ipv4下载，而不是ipv6
-    # axel 在 lightsail 上会占用大量cpu
+    # with an ipv4 address but no ipv4 gateway, aria2 may download over ipv4 instead of ipv6
+    # axel uses a lot of cpu on lightsail
     # https://download.opensuse.org/distribution/leap/15.5/appliances/openSUSE-Leap-15.5-Minimal-VM.x86_64-kvm-and-xen.qcow2
     # https://aria2.github.io/manual/en/html/aria2c.html#cmdoption-o
 
-    # 阿里云源限速，而且检测 user-agent 禁止 axel/aria2 下载
-    # aria2 默认 --max-tries 5
+    # some mirrors rate-limit and block axel/aria2 by user-agent
+    # aria2 defaults to --max-tries 5
 
-    # 默认 --max-tries=5，但以下情况服务器出错，aria2不会重试，而是直接返回错误
-    # 因此添加 for 循环
+    # the default is --max-tries=5, but in the case below the server errors and aria2 returns immediately instead of retrying,
+    # hence the for loop
     #     [ERROR] CUID#7 - Download aborted. URI=https://aka.ms/manawindowsdrivers
     # Exception: [AbstractCommand.cc:351] errorCode=1 URI=https://aka.ms/manawindowsdrivers
     #   -> [SocketCore.cc:1019] errorCode=1 SSL/TLS handshake failure:  `not signed by known authorities or invalid'
 
-    # 用 if 的话，报错不会中断脚本
+    # with if, an error would not abort the script
     # if aria2c xxx; then
     #     return
     # fi
@@ -308,7 +308,7 @@ download() {
     # --user-agent=Wget/1.21.1 \
     # --retry-wait 5
 
-    # 检测大小时已经下载了种子
+    # the torrent was already downloaded while checking the size
     if [ "$(get_url_type "$url")" = bt ]; then
         torrent="$(get_torrent_path_by_magnet $url)"
         if ! [ -f "$torrent" ]; then
@@ -317,12 +317,12 @@ download() {
         url=$torrent
     fi
 
-    # intel 禁止了 aria2 下载驱动
-    # intel 禁止了 wget 下载网页内容
-    # 腾讯云 virtio 驱动也禁止了 aria2 下载
+    # intel blocks aria2 from downloading drivers
+    # intel blocks wget from downloading page content
+    # the tencent cloud virtio driver also blocks aria2
 
-    # -o 设置 http 下载文件名
-    # -O 设置 bt 首个文件的文件名
+    # -o sets the http download filename
+    # -O sets the filename of the first bt file
     set -- \
         -d "$(dirname "$path")" \
         -o "$(basename "$path")" \
@@ -333,9 +333,9 @@ download() {
         error_and_exit "Failed to download $url"
     fi
 
-    # opensuse 官方镜像支持 metalink
-    # aria2 无法重命名用 metalink 下载的文件
-    # 需用以下方法重命名
+    # the official opensuse mirror supports metalink
+    # aria2 cannot rename a file downloaded via metalink,
+    # so rename it as follows
     if head -c 1024 "$path" | grep -Fq 'urn:ietf:params:xml:ns:metalink'; then
         real_file=$(tr -d '\n' <"$path" | sed -E 's|.*<file[[:space:]]+name="([^"]*)".*|\1|')
         mv "$(dirname "$path")/$real_file" "$path"
@@ -347,7 +347,7 @@ update_part() {
     sync
 
     # partprobe
-    # 有分区挂载中会报 Resource busy 错误
+    # a mounted partition causes a Resource busy error
     if is_have_cmd partprobe; then
         partprobe /dev/$xda 2>/dev/null || true
     fi
@@ -359,17 +359,17 @@ update_part() {
     fi
 
     # mdev
-    # mdev 不会删除 /dev/disk/ 的旧分区，因此手动删除
-    # 如果 rm -rf 的时候刚好 mdev 在创建链接，rm -rf 会报错 Directory not empty
-    # 因此要先停止 mdev 服务
-    # 还要删除 /dev/$xda*?
+    # mdev does not remove the old partitions under /dev/disk/, so remove them by hand
+    # if mdev happens to be creating a link during rm -rf, rm -rf fails with Directory not empty,
+    # so stop the mdev service first
+    # should /dev/$xda* be removed too?
     ensure_service_stopped mdev
-    # 即使停止了 mdev，有时也会报 Directory not empty，因此添加 retry
+    # even with mdev stopped it sometimes still reports Directory not empty, hence the retry
     retry 5 rm -rf /dev/disk/*
 
-    # 没挂载 modloop 时会提示
+    # a warning is printed when modloop is not mounted,
     # modprobe: can't change directory to '/lib/modules': No such file or directory
-    # 因此强制不显示上面的提示
+    # so suppress it
     mdev -sf 2>/dev/null
     ensure_service_started mdev 2>/dev/null
     sleep 1
@@ -413,13 +413,13 @@ setup_websocketd() {
     apk add coreutils
 
     killall -q websocketd || true
-    # websocketd 遇到 \n 才推送，因此要转换 \r 为 \n
+    # websocketd only pushes on \n, so convert \r to \n
     websocketd --port "$web_port" --loglevel=fatal --staticdir=/tmp \
         stdbuf -oL -eL sh -c "tail -fn+0 /reinstall.log | tr '\r' '\n' | grep -Fiv -e password -e token" &
 }
 
 get_approximate_ram_size() {
-    # lsmem 需要 util-linux
+    # lsmem needs util-linux
     if false && is_have_cmd lsmem; then
         ram_size=$(lsmem -b 2>/dev/null | grep 'Total online memory:' | awk '{ print $NF/1024/1024 }')
     fi
@@ -433,9 +433,9 @@ get_approximate_ram_size() {
 
 setup_web_if_enough_ram() {
     total_ram=$(get_approximate_ram_size)
-    # 512内存才安装
+    # only install with 512 of memory
     if [ "$total_ram" -ge 400 ]; then
-        # lighttpd 虽然运行占用内存少，但安装占用空间大
+        # lighttpd uses little memory at run time but a lot of space to install
         # setup_lighttpd
         # setup_nginx
         setup_websocketd
@@ -455,23 +455,23 @@ get_ttys() {
 }
 
 find_xda() {
-    # 出错后再运行脚本，硬盘可能已经格式化，之前记录的分区表 id 无效
-    # 因此找到 xda 后要保存 xda 到 /configs/xda
+    # if the script is re-run after an error the disk may already be formatted, making the recorded partition table id invalid,
+    # so save xda to /configs/xda once it is found
 
-    # 先读取之前保存的
+    # read the previously saved value first
     if xda=$(get_config xda 2>/dev/null) && [ -n "$xda" ]; then
         return
     fi
 
-    # 防止 $main_disk 为空
+    # guard against an empty $main_disk
     if [ -z "$main_disk" ]; then
         error_and_exit "cmdline main_disk is empty."
     fi
 
-    # busybox fdisk/lsblk/blkid 不显示 mbr 分区表 id
-    # 可用以下工具：
-    # fdisk 在 util-linux-misc 里面，占用大
-    # sfdisk 占用小
+    # busybox fdisk/lsblk/blkid do not show the mbr partition table id
+    # these tools can be used instead:
+    # fdisk lives in util-linux-misc, which is large
+    # sfdisk is small
     # lsblk
     # blkid
 
@@ -512,7 +512,7 @@ get_all_disks() {
 }
 
 extract_env_from_cmdline() {
-    # 提取 finalos/extra 到变量
+    # Extract finalos/extra into variables
     for prefix in finalos extra; do
         while read -r line; do
             if [ -n "$line" ]; then
@@ -523,7 +523,7 @@ extract_env_from_cmdline() {
         done < <(xargs -n1 </proc/cmdline | grep "^${prefix}_" | sed "s/^${prefix}_//")
     done
 
-    # 如果空白则设置默认值
+    # set the default when blank
     if [ "$distro" = windows ]; then
         username=${username:-administrator}
     else
@@ -540,7 +540,7 @@ ensure_service_started() {
     if ! rc-service -q "$service" start; then
         for i in $(seq 10); do
             if [ "$service" = modloop ]; then
-                # 避免有时 modloop 下载不完整导致报错
+                # guard against an incomplete modloop download causing an error
                 # * Failed to verify signature of !
                 # mount: mounting /dev/loop0 on /.modloop failed: Invalid argument
                 rm -f /lib/modloop-lts /lib/modloop-virt
@@ -563,8 +563,8 @@ ensure_service_stopped() {
 }
 
 mod_motd() {
-    # 安装后 alpine 后要恢复默认
-    # 自动安装失败后，可能手动安装 alpine，因此无需判断 $distro
+    # restore the defaults after alpine is installed
+    # alpine may have been installed manually after an automatic install failed, so do not check $distro
     file=/etc/motd
     if ! [ -e $file.orig ]; then
         cp $file $file.orig
@@ -591,7 +591,7 @@ umount_all() {
     fi
 }
 
-# 可能脚本不是首次运行，先清理之前的残留
+# The script may not be running for the first time, so clean up any leftovers
 clear_previous() {
     if is_have_cmd vgchange; then
         umount -R /os /nbd || true
@@ -600,36 +600,36 @@ clear_previous() {
         dmsetup remove_all
     fi
     disconnect_qcow
-    # 安装 arch 有 gpg-agent 进程驻留
-    # 在 aria2c 下载时手动中止脚本，aria2c 还会在后台下载
+    # installing arch leaves a gpg-agent process running
+    # aborting the script by hand during an aria2c download leaves aria2c downloading in the background
     killall -q gpg-agent aria2c || true
     rc-service -q --ifexists --ifstarted nix-daemon stop
     swapoff -a
     umount_all
 
-    # 以下情况 umount -R /1 会提示 busy
+    # in the following case umount -R /1 reports busy
     # mount /file1 /1
     # mount /1/file2 /2
 }
 
-# virt-what 自动安装 dmidecode，因此同时缓存
+# virt-what pulls in dmidecode, so cache both together
 cache_dmi_and_virt() {
     if ! [ "$_dmi_and_virt_cached" = 1 ]; then
         apk add virt-what
 
-        # 区分 kvm 和 virtio，原因:
-        # 1. 阿里云 c8y virt-what 不显示 kvm
-        # 2. 不是所有 kvm 都需要 virtio 驱动，例如 aws nitro
-        # 3. virt-what 不会检测 virtio
+    # distinguish kvm from virtio, because:
+    # 1. virt-what does not report kvm on alibaba cloud c8y
+    # 2. not every kvm needs the virtio driver, e.g. aws nitro
+    # 3. virt-what does not detect virtio
         _virt=$(
             virt-what
 
-            # hyper-v 环境下 modprobe virtio_scsi 也会创建 /sys/bus/virtio/drivers/virtio_scsi
-            # 因此用 devices 判断更准确，有设备时才有 /sys/bus/virtio/drivers/*
-            # 或者加上 lspci 检测?
+            # under hyper-v, modprobe virtio_scsi also creates /sys/bus/virtio/drivers/virtio_scsi
+            # so checking devices is more accurate: /sys/bus/virtio/drivers/* only exists when a device does
+            # or should lspci be used as well?
 
-            # 不要用 ls /sys/bus/virtio/devices/* && echo virtio
-            # 因为有可能返回值不为 0 而中断脚本
+            # do not use ls /sys/bus/virtio/devices/* && echo virtio
+            # because a non-zero exit status would abort the script
             if ls /sys/bus/virtio/devices/* >/dev/null 2>&1; then
                 echo virtio
             fi
@@ -684,7 +684,7 @@ set_config() {
     printf '%s' "$2" >"/configs/$1"
 }
 
-# ubuntu 安装版、el/ol 安装版不使用该密码
+# the ubuntu and el/ol installer editions do not use this password
 get_password_linux_sha512() {
     get_config password-linux-sha512
 }
@@ -712,13 +712,13 @@ show_netconf() {
 get_ra_to() {
     if [ -z "$_ra" ]; then
         apk add ndisc6
-        # 有时会重复收取，所以设置收一份后退出
+        # it is sometimes received more than once, so exit after the first
         echo "Gathering network info..."
         # shellcheck disable=SC2154
         _ra="$(rdisc6 -1 "$ethx")"
         apk del ndisc6
 
-        # 显示网络配置
+        # show the network configuration
         info "Network info:"
         echo
         echo "$_ra" | cat -n
@@ -737,7 +737,7 @@ get_netconf_to() {
     esac
 
     # shellcheck disable=SC2154
-    # debian initrd 没有 xargs
+    # the debian initrd has no xargs
     case "$1" in
     slaac) echo "$ra" | grep 'Autonomous address conf' | grep -q Yes && res=1 || res=0 ;;
     dhcpv6) echo "$ra" | grep 'Stateful address conf' | grep -q Yes && res=1 || res=0 ;;
@@ -753,8 +753,8 @@ is_any_ipv4_has_internet() {
     grep -q 1 /dev/netconf/*/ipv4_has_internet
 }
 
-# 有 dhcpv4 不等于有网关，例如 vultr 纯 ipv6
-# 没有 dhcpv4 不等于是静态ip，可能是没有 ip
+# having dhcpv4 does not mean there is a gateway, e.g. vultr pure ipv6
+# not having dhcpv4 does not mean the ip is static; there may be no ip at all
 is_dhcpv4() {
     if ! is_ipv4_has_internet || should_disable_dhcpv4; then
         return 1
@@ -832,13 +832,13 @@ should_disable_autoconf() {
 }
 
 is_slaac() {
-    # 如果是静态（包括自动获取到 IP 但无法联网而切换成静态）直接返回 1，不考虑 ra
-    # 防止部分机器slaac/dhcpv6获取的ip/网关无法上网
+    # if static (including an auto-assigned IP switched to static because it had no connectivity), return 1 immediately and ignore ra
+    # this stops machines whose slaac/dhcpv6 ip/gateway cannot reach the internet
 
-    # 有可能 ra 的 dhcpv6/slaac 是打开的，但实测无法获取到 ipv6 地址
-    # is_dhcpv6_or_slaac 是实测结果，因此如果实测不通过，也返回 1
+    # the ra dhcpv6/slaac flags may be on while no ipv6 address is actually obtained
+    # is_dhcpv6_or_slaac reflects the real result, so return 1 when that fails too
 
-    # 不要判断 is_staticv6，因为这会导致死循环
+    # do not test is_staticv6 here: it would cause infinite recursion
     if ! is_ipv6_has_internet || ! is_dhcpv6_or_slaac || should_disable_accept_ra || should_disable_autoconf; then
         return 1
     fi
@@ -848,22 +848,22 @@ is_slaac() {
 }
 
 is_dhcpv6() {
-    # 如果是静态（包括自动获取到 IP 但无法联网而切换成静态）直接返回 1，不考虑 ra
-    # 防止部分机器slaac/dhcpv6获取的ip/网关无法上网
+    # if static (including an auto-assigned IP switched to static because it had no connectivity), return 1 immediately and ignore ra
+    # this stops machines whose slaac/dhcpv6 ip/gateway cannot reach the internet
 
-    # 有可能 ra 的 dhcpv6/slaac 是打开的，但实测无法获取到 ipv6 地址
-    # is_dhcpv6_or_slaac 是实测结果，因此如果实测不通过，也返回 1
+    # the ra dhcpv6/slaac flags may be on while no ipv6 address is actually obtained
+    # is_dhcpv6_or_slaac reflects the real result, so return 1 when that fails too
 
-    # 不要判断 is_staticv6，因为这会导致死循环
+    # do not test is_staticv6 here: it would cause infinite recursion
     if ! is_ipv6_has_internet || ! is_dhcpv6_or_slaac || should_disable_accept_ra || should_disable_autoconf; then
         return 1
     fi
     get_netconf_to dhcpv6
 
     # shellcheck disable=SC2154
-    # 甲骨文即使没有添加 IPv6 地址，RA DHCPv6 标志也是开的
-    # 部分系统开机需要等 DHCPv6 超时
-    # 这种情况需要禁用 DHCPv6
+    # on Oracle the RA DHCPv6 flag is set even when no IPv6 address was added
+    # some systems then wait for a DHCPv6 timeout at boot,
+    # so DHCPv6 must be disabled in that case
     if [ "$dhcpv6" = 1 ] && ! ip -6 -o addr show scope global dev "$ethx" | grep -q .; then
         echo 'DHCPv6 flag is on, but DHCPv6 is not working.'
         return 1
@@ -883,17 +883,17 @@ is_enable_other_flag() {
 }
 
 is_have_rdnss() {
-    # rdnss 可能有几个
+    # there may be several rdnss entries
     get_netconf_to rdnss
     [ -n "$rdnss" ]
 }
 
-# dd 完检测到镜像是 windows 时会改写此方法
+# this function is overwritten when the dd image is detected as windows
 is_windows() {
     [ "$distro" = windows ]
 }
 
-# 15063 或之后才支持 rdnss
+# rdnss is only supported on 15063 and later
 is_windows_support_rdnss() {
     [ "$build_ver" -ge 15063 ]
 }
@@ -904,7 +904,7 @@ get_windows_version_from_windows_drive() {
     # https://wiki.tcl-lang.org/page/Windows+OS+name
     # https://nsis.sourceforge.io/Get_Windows_version
 
-    # win10+ 才有 CurrentMajorVersionNumber 和 CurrentMinorVersionNumber
+    # only win10+ has CurrentMajorVersionNumber and CurrentMinorVersionNumber
     # CurrentVersion            6.3
     # CurrentMajorVersionNumber  10
     # CurrentMinorVersionNumber   0
@@ -922,25 +922,25 @@ get_windows_version_from_windows_drive() {
         nt_ver="$nt_ver_major.$nt_ver_minor"
     else
         # en_windows_vista_sp2_x64_dvd_342267.iso
-        # 安装前 CurrentVersion 是 6.0
-        # 安装后 CurrentVersion 是 6.0
+        # before install, CurrentVersion is 6.0
+        # after install, CurrentVersion is 6.0
 
         # en_windows_vista_sp2_with_update_6003.23713_aio_7in1_x64_v26.01.13_by_adguard.iso
-        # 安装前 CurrentVersion 是 6.0.6002.18005
-        # 安装后 CurrentVersion 是 6.0
+        # before install, CurrentVersion is 6.0.6002.18005
+        # after install, CurrentVersion is 6.0
 
-        # 添加 cut 用于兼容这两种情况
+        # cut is added to handle both cases
         nt_ver=$(get_current_version_key CurrentVersion | cut -d. -f1-2)
     fi
 
     # build_ver
-    # win10 22h2 19045 的 exe/dll 版本还是 19041 的，因此要从注册表获取
-    # vista sp2 iso 安装 KB4474419 后, CurrentBuild 是 6002, CurrentBuildNumber 是 6003
+    # the exe/dll version of win10 22h2 19045 is still 19041, so read it from the registry
+    # after installing KB4474419 on a vista sp2 iso, CurrentBuild is 6002 and CurrentBuildNumber is 6003
     build_ver=$(get_current_version_key CurrentBuildNumber)
 
     # rev_ver
-    # 实测 win10 winver 是从 UBR 读取 revision 版本
-    # vista sp2 iso 没有 UBR，后期有月度汇总更新包时才有 UBR
+    # in practice win10 winver reads the revision from UBR
+    # a vista sp2 iso has no UBR; it only appears once a monthly rollup is installed
     if ! rev_ver=$(get_current_version_key UBR 2>/dev/null); then
         rev_ver=$(get_current_version_key BuildLabEx | cut -d. -f2)
     fi
@@ -966,7 +966,7 @@ is_need_change_rdp_port() {
 }
 
 is_need_manual_set_dnsv6() {
-    # 有没有可能是静态但是有 rdnss？
+    # is it possible to be static and still have rdnss?
     ! is_have_ipv6 && return $FALSE
     is_dhcpv6 && return $FALSE
     is_staticv6 && return $TRUE
@@ -981,8 +981,8 @@ get_current_dns() {
         6) echo : ;;
         esac
     )
-    # debian 11 initrd 没有 xargs awk
-    # debian 12 initrd 没有 xargs
+    # the debian 11 initrd has no xargs or awk
+    # the debian 12 initrd has no xargs
     if false; then
         grep '^nameserver' /etc/resolv.conf | awk '{print $2}' | grep -F "$mark" | cut -d '%' -f1
     else
@@ -1011,8 +1011,8 @@ del_empty_lines() {
 }
 
 del_head_empty_lines_inplace() {
-    # 从第一行直到找到 ^[:space:]
-    # 这个区间内删除所有空行
+    # from the first line until ^[:space:] is found,
+    # delete every blank line in that range
     sed -i '1,/[^[:space:]]/ { /^[[:space:]]*$/d }' "$@"
 }
 
@@ -1045,15 +1045,15 @@ del_invalid_efi_entry() {
     done < <(efibootmgr | grep 'HD(.*,GPT,')
 }
 
-# reinstall.sh 有同名方法
+# reinstall.sh has a function of the same name
 grep_efi_index() {
     awk '{print $1}' | sed -e 's/Boot//' -e 's/\*//'
 }
 
-# 某些机器可能不会回落到 bootx64.efi
-# 阿里云 ECS 启动项有 EFI Shell
-# 添加 bootx64.efi 到最后的话，会进入 EFI Shell
-# 因此添加到最前面
+# some machines may not fall back to bootx64.efi
+# the alibaba cloud ECS boot menu has an EFI Shell entry
+# appending bootx64.efi last would boot into the EFI Shell,
+# so prepend it instead
 add_default_efi_to_nvram() {
     info "add default EFI to nvram"
 
@@ -1065,8 +1065,8 @@ add_default_efi_to_nvram() {
         efi_part_num=$(get_part_num_by_part "$efi_part_name")
         efi_file=$(get_fallback_efi_file_name)
 
-        # 创建条目，先判断是否已经存在
-        # 好像没必要先判断
+        # create the entry, checking first whether it already exists
+        # the check may not be necessary
         if true || ! efibootmgr | grep -i "HD($efi_part_num,GPT,$efi_part_uuid,.*)/File(\\\EFI\\\boot\\\\$efi_file)"; then
             efibootmgr --create \
                 --disk "/dev/$xda" \
@@ -1079,16 +1079,12 @@ add_default_efi_to_nvram() {
         if [ "$confirmed_no_efi" = 1 ]; then
             echo 'Confirmed no EFI in previous step.'
         else
-            # reinstall.sh 里确认过一遍，但是逻辑扇区大于 512 时，可能漏报？
-            # 这里的应该会根据逻辑扇区来判断？
+            # reinstall.sh already checked this, but could it be missed when the logical sector is larger than 512?
+            # this check should take the logical sector size into account
             echo "
 Warning: This machine is currently using EFI boot, but the main hard drive does not have an EFI partition.
 If this machine supports Legacy BIOS boot (CSM), you can safely restart into the new system by running the reboot command.
 If this machine does not support Legacy BIOS boot (CSM), you will not be able to enter the new system after rebooting.
-
-警告：本机目前使用 EFI 引导，但主硬盘没有 EFI 分区。
-如果本机支持 Legacy BIOS 引导 (CSM)，你可以运行 reboot 命令安全地重启到新系统。
-如果本机不支持 Legacy BIOS 引导 (CSM)，重启后将无法进入新系统。
 "
             exit
         fi
@@ -1098,14 +1094,14 @@ If this machine does not support Legacy BIOS boot (CSM), you will not be able to
 unix2dos() {
     target=$1
 
-    # 先原地unix2dos，出错再用cat，可最大限度保留文件权限
+    # try unix2dos in place first and fall back to cat, which preserves file permissions as far as possible
     if ! command unix2dos $target 2>/tmp/unix2dos.log; then
-        # 出错后删除 unix2dos 创建的临时文件
+        # on error, remove the temp file unix2dos created
         rm "$(awk -F: '{print $2}' /tmp/unix2dos.log | xargs)"
         tmp=$(mktemp)
         cp $target $tmp
         command unix2dos $tmp
-        # cat 可以保留权限
+        # cat preserves the permissions
         cat $tmp >$target
         rm $tmp
     fi
@@ -1121,7 +1117,7 @@ insert_into_file() {
         error_and_exit "File not found: $file"
     fi
 
-    # 默认 grep -E
+    # grep -E by default
     if [ $# -eq 0 ]; then
         set -- -E
     fi
@@ -1171,7 +1167,7 @@ source /etc/network/interfaces.d/*
 EOF
     fi
 
-    # 生成 lo配置
+    # Generate the lo configuration
     cat <<EOF >>$conf_file
 auto lo
 iface lo inet loopback
@@ -1184,14 +1180,14 @@ EOF
         if false; then
             if { [ "$distro" = debian ] && [ "$releasever" -ge 12 ]; } ||
                 [ "$distro" = kali ]; then
-                # alice + allow-hotplug 会有问题
-                # 问题 1 debian 9/10/11/12:
-                # 如果首次启动时，/etc/networking/interfaces 的 ethx 跟安装时不同
-                # 即使启动 networking 服务前成功执行了 fix-eth-name.sh ，网卡也不会启动
-                # 测试方法: 安装时手动修改 /etc/networking/interfaces enp3s0 为其他名字
-                # 问题 2 debian 9/10/11:
-                # 重启系统后会自动启动网卡，但运行 systemctl restart networking 会关闭网卡
-                # 可能的原因: /lib/systemd/system/networking.service 没有 hotplug 相关内容，而 debian 12+ 有
+                # alice + allow-hotplug is problematic
+                # problem 1, debian 9/10/11/12:
+                # if ethx in /etc/networking/interfaces differs at first boot from what it was at install time,
+                # the NIC does not come up even when fix-eth-name.sh ran successfully before the networking service
+                # to reproduce: during install, rename enp3s0 in /etc/networking/interfaces to something else
+                # problem 2, debian 9/10/11:
+                # the NIC comes up automatically after a reboot, but systemctl restart networking takes it down
+                # likely cause: /lib/systemd/system/networking.service has nothing hotplug related, while debian 12+ does
                 if [ -f /etc/network/devhotplug ] && grep -wo "$ethx" /etc/network/devhotplug; then
                     mode=allow-hotplug
                 fi
@@ -1202,17 +1198,17 @@ EOF
             # fi
         fi
 
-        # dmit debian 普通内核和云内核网卡名不一致，因此需要 rename
-        # 安装系统时 ens18
-        # 普通内核   ens18
-        # 云内核     enp6s18
+        # on dmit debian the NIC name differs between the normal and cloud kernels, so a rename is needed
+        # at install time  ens18
+        # normal kernel    ens18
+        # cloud kernel     enp6s18
         # https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=928923
 
-        # 头部
+        # header
         get_netconf_to mac_addr
         {
             echo
-            # 这是标记，fix-eth-name 要用，不要删除
+            # this is a marker used by fix-eth-name; do not remove it
             # shellcheck disable=SC2154
             echo "# mac $mac_addr"
             echo $mode $ethx
@@ -1246,10 +1242,10 @@ EOF
             echo "iface $ethx inet6 auto" >>$conf_file
             has_ipv6_iface=true
         elif is_dhcpv6; then
-            # debian 13 使用 ifupdown + dhcpcd-base
-            # inet/inet6 都配置成 dhcp 时，重启后 dhcpv4 会丢失
-            # 手动 systemctl restart networking 后正常
-            # 删除 dhcpcd-base 安装 isc-dhcp-client（类似 debian 12 升级到 13），轮到 dhcpv6 丢失
+            # debian 13 uses ifupdown + dhcpcd-base
+            # with both inet and inet6 set to dhcp, dhcpv4 is lost after a reboot
+            # a manual systemctl restart networking fixes it
+            # removing dhcpcd-base and installing isc-dhcp-client (as a debian 12 to 13 upgrade does) loses dhcpv6 instead
             if { [ "$distro" = debian ] && [ "$releasever" -ge 13 ]; } ||
                 [ "$distro" = kali ]; then
                 echo "iface $ethx inet6 auto" >>$conf_file
@@ -1267,14 +1263,14 @@ iface $ethx inet6 static
 EOF
             has_ipv6_iface=true
             # debian 9
-            # ipv4 支持静态 onlink 网关
-            # ipv6 不支持静态 onlink 网关，需使用 post-up 添加，未测试动态
-            # ipv6 也不支持直接 ip route add default via xxx onlink
+            # ipv4 supports a static onlink gateway
+            # ipv6 does not; it must be added with post-up. The dynamic case is untested
+            # ipv6 also does not support ip route add default via xxx onlink directly
             if [ "$distro" = debian ] && [ "$releasever" -le 9 ]; then
-                # debian 添加 gateway 失败时不会执行 post-up
-                # 因此 gateway post-up 只能二选一
+                # debian skips post-up when adding the gateway fails,
+                # so it must be either gateway or post-up, not both
 
-                # 注释最后一行，也就是 gateway
+                # comment out the last line, which is the gateway
                 sed -Ei '$s/^( *)/\1# /' "$conf_file"
                 cat <<EOF >>$conf_file
     post-up ip route add $ipv6_gateway dev $ethx
@@ -1282,7 +1278,7 @@ EOF
 EOF
             fi
 
-            # 额外的 IPv6 地址（子网不含网关的地址）
+            # extra IPv6 addresses (those whose subnet does not contain the gateway)
             get_netconf_to ipv6_extra_addrs
             if [ -n "$ipv6_extra_addrs" ]; then
                 (
@@ -1293,16 +1289,16 @@ EOF
                 )
             fi
         fi
-        # accept_ra/autoconf 属于 iface 选项
-        # 如果当前网卡没有生成 IPv6 iface stanza，
-        # 先补一个 manual stanza，避免 ifupdown 报 misplaced option
+        # accept_ra/autoconf are iface options
+        # if no IPv6 iface stanza was generated for this NIC,
+        # add a manual stanza first so ifupdown does not report a misplaced option
         if ! $has_ipv6_iface &&
             { should_disable_accept_ra || should_disable_autoconf; } &&
             [ "$distro" != alpine ]; then
             echo "iface $ethx inet6 manual" >>$conf_file
         fi
         # dns
-        # 有 ipv6 但需设置 dns 的情况
+        # the case where ipv6 exists but dns still needs setting
         if is_need_manual_set_dnsv6; then
             for dns in $(get_current_dns 6); do
                 cat <<EOF >>$conf_file
@@ -1311,7 +1307,7 @@ EOF
             done
         fi
 
-        # 禁用 ra
+        # disable ra
         if should_disable_accept_ra; then
             if [ "$distro" = alpine ]; then
                 cat <<EOF >>$conf_file
@@ -1324,7 +1320,7 @@ EOF
             fi
         fi
 
-        # 禁用 autoconf
+        # disable autoconf
         if should_disable_autoconf; then
             if [ "$distro" = alpine ]; then
                 cat <<EOF >>$conf_file
@@ -1366,7 +1362,7 @@ add_space() {
     sed "s/^/$spaces/"
 }
 
-# 不够严谨，谨慎使用
+# Not rigorous; use with care
 nix_replace() {
     local key=$1
     local value=$2
@@ -1374,7 +1370,7 @@ nix_replace() {
     local file=$4
     local key_ value_
 
-    key_=$(echo "$key" | sed 's \. \\\. g') # . 改成 \.
+    key_=$(echo "$key" | sed 's \. \\\. g') # change . into \.
 
     if [ "$type" = array ]; then
         local value_="[ $value ]"
@@ -1390,10 +1386,10 @@ install_alpine() {
     swap_size=$(get_need_swap_size $need_ram)
     [ "$swap_size" -gt 0 ] && hack_lowram=true || hack_lowram=false
 
-    # alpine 安装时会自动检测安装需要的 firmware
+    # alpine detects the firmware it needs during installation
     # https://github.com/alpinelinux/alpine-conf/blob/3.18.1/setup-disk.in#L421
-    # 但如果没有 modloop 则无法检测
-    # 所以删除 modloop 前先记录用到的 firmware 包
+    # but it cannot do so without modloop,
+    # so record the firmware packages in use before deleting modloop
     fw_pkgs=$(get_alpine_firmware_pkgs)
 
     if $hack_lowram; then

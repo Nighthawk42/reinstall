@@ -5530,11 +5530,11 @@ install_windows() {
 
     # system                                InstallationType    ProductType    ProductSuite
     # Windows Client (ordinary Windows)     Client              WinNT          Terminal Server
-    # Windows 10/11 Enterprise 多会话        Client             ServerNT     Terminal Server
-    # Windows Server 2012 R2 桌面体验        Server             ServerNT     Terminal Server 和 DataCenter (两行)
-    # Windows Server 2012 R2 不带桌面体验    Server Core        ServerNT     Terminal Server 和 DataCenter (两行)
-    # Windows Server 2025 桌面体验           Server             ServerNT     Enterprise
-    # Windows Server 2025 不带桌面体验       Server Core        ServerNT     Enterprise
+    # Windows 10/11 Enterprise multi-session  Client              ServerNT       Terminal Server
+    # Windows Server 2012 R2 Desktop Exp.   Server              ServerNT       Terminal Server and DataCenter (two lines)
+    # Windows Server 2012 R2 Core           Server Core         ServerNT       Terminal Server and DataCenter (two lines)
+    # Windows Server 2025 Desktop Exp.      Server              ServerNT       Enterprise
+    # Windows Server 2025 Core              Server Core         ServerNT       Enterprise
     # WES7 / Thin PC                         Embedded           WinNT        Terminal Server
 
     mount_iso_install_wim_to() {
@@ -5546,49 +5546,49 @@ install_windows() {
             $($is_swm && echo "--ref=$(dirname "$iso_install_wim")/$swm_ref")
     }
 
-    # 挂载 install.wim，检查
-    # 1. 是否自带 sac 组件
-    # 2. 是否自带 nvme 驱动
-    # 3. 是否支持 sha256
+    # Mount install.wim and check
+    # 1. whether it ships the sac component
+    # 2. whether it ships an nvme driver
+    # 3. whether it supports sha256
     # 4. Installation Type
     mount_iso_install_wim_to /wim
 
-    # 获取版本号
+    # Get the version number
     get_windows_version_from_windows_drive /wim
 
-    # 检测 client/server，并转换成标准版 windows 名称
-    # 用于将 Hyper-V Server / Azure Stack HCI / Windows Server AC 的版本号转换成对应的 LTSC 版本号，用于查找驱动
+    # Detect client/server and convert to the standard windows name
+    # used to map Hyper-V Server / Azure Stack HCI / Windows Server AC versions onto the matching LTSC version for driver lookup
     windows_type=$(get_windows_type_from_windows_drive /wim)
     product_ver=$(get_windows_name_by_version "$nt_ver" "$build_ver" "$windows_type")
 
-    # 检测 sac 和 nvme
+    # Detect sac and nvme
     {
         find_file_ignore_case /wim/Windows/System32/sacsess.exe && has_sac=true || has_sac=false
         find_file_ignore_case /wim/Windows/System32/drivers/stornvme.sys && has_stornvme=true || has_stornvme=false
     } >/dev/null 2>&1
 
-    # 检测是否支持 sha256 签名的驱动
+    # Detect whether sha256-signed drivers are supported
     support_sha256=false
     if is_nt_ver_ge 6.2; then
         support_sha256=true
     else
-        # 安装环境下 drvload.exe 不会验证签名，能安装 sha256 的驱动
-        # 但重启后提示 Windows cannot verify the digital signature for this file.
+        # in the install environment drvload.exe does not verify signatures and can load a sha256 driver,
+        # but after a reboot it reports: Windows cannot verify the digital signature for this file.
 
-        # winload.exe/efi 有这串字符
+        # winload.exe/efi contains this string
         # Windows cannot verify the digital signature for this file.
         # strings -e l winload.exe | grep -i signature
         # strings -e l winload.efi | grep -i signature
 
-        # 硬盘控制器驱动是 boot-start 驱动，由 winload.exe/efi 验证签名
-        # 网卡驱动不是 boot-start 驱动，由 ci.dll 验证签名
+        # disk controller drivers are boot-start drivers, whose signature winload.exe/efi verifies
+        # NIC drivers are not boot-start drivers; ci.dll verifies those
 
-        # win7 sp1 iso 不支持 sha256 的驱动，但是
-        # ci.dll      能找到 8+64 个常量和 oid 0609608648016503040201 0102040365014886600906
-        # winload.exe 能找到 8+64 个常量和 oid 0609608648016503040201 0102040365014886600906
-        # winload.efi 能找到 8+64 个常量和 oid     608648016503040201
+        # the win7 sp1 iso does not support sha256 drivers, yet
+        # ci.dll      contains the 8+64 constants and oids 0609608648016503040201 0102040365014886600906
+        # winload.exe contains the 8+64 constants and oids 0609608648016503040201 0102040365014886600906
+        # winload.efi contains the 8+64 constants and oid      608648016503040201
 
-        # 官网有提到 KB3033929 和 KB4039648, 应该分别是 2008r2 和 2008 最早支持 sha256 的补丁
+        # the docs mention KB3033929 and KB4039648, presumably the earliest sha256 patches for 2008r2 and 2008
         # https://support.microsoft.com/kb/4472027#:~:text=KB3033929%20%E5%92%8C%20KB4039648
         # https://support.drweb.cn/sha2
         # https://support.kaspersky.com/common/compatibility/15761
@@ -5596,25 +5596,25 @@ install_windows() {
         # https://www.catalog.update.microsoft.com/
 
         # vista sp2 iso
-        # 用 KB4039648 和 KB4090450 做测试，独立安装时，注册表没有发现另一个 KB 的痕迹
-        # 后续很多补丁如果包含 winload.exe/efi，都是支持 sha256 的新版，因此不能通过检测 KB 编号来判断
+        # testing KB4039648 and KB4090450 installed on their own, the registry shows no trace of the other KB
+        # many later patches that include winload.exe/efi also carry sha256 support, so the KB number cannot be used to decide
         # HKEY_LOCAL_MACHINE\Microsoft\Windows\CurrentVersion\Component Based Servicing\Package
         # HKEY_LOCAL_MACHINE\Microsoft\Windows\CurrentVersion\Component Based Servicing\PackageDetect
 
-        # vista sp2 iso 独立安装以下补丁时
-        # 补丁          发布日期   BuildLabEx          ubr    winload.exe   winload.efi   ci.dll
-        # KB4039648 旧  2018/2/21  6002.18005(没改变)  没有   6002.24259    6002.24283    6002.24259
-        # KB4039648 新  2018/3/22  6002.18005(没改变)  没有   6002.24259    6002.24298    6002.24259
-        # KB4039648-v2  2018/6/12  6002.24381          没有   6002.24362    6002.24381    6002.24259
-        # KB4474419-v4  2019/10/8  6003.20555          没有   6003.20505    6003.20555    6003.20593
+        # installing the following patches individually on a vista sp2 iso:
+        # patch          released    BuildLabEx           ubr   winload.exe   winload.efi   ci.dll
+        # KB4039648 old  2018/2/21   6002.18005(unchanged) no   6002.24259    6002.24283    6002.24259
+        # KB4039648 new  2018/3/22   6002.18005(unchanged) no   6002.24259    6002.24298    6002.24259
+        # KB4039648-v2   2018/6/12   6002.24381            no   6002.24362    6002.24381    6002.24259
+        # KB4474419-v4   2019/10/8   6003.20555            no   6003.20505    6003.20555    6003.20593
 
-        # win7 sp1 iso 独立安装以下补丁时
-        # KB3033929     2015/3/10  7601.18741          没有   18649/22854  18741/22948    18519/22730
-        # KB4474419-v3  2019/9/10  7601.24384          没有         24149        24384          24158
+        # installing the following patches individually on a win7 sp1 iso:
+        # KB3033929      2015/3/10   7601.18741            no   18649/22854   18741/22948   18519/22730
+        # KB4474419-v3   2019/9/10   7601.24384            no        24149         24384         24158
 
-        # 最早的 KB4039648 KB3033929 都支持 sha256
-        # winload.exe/efi 版本号 >= ci.dll
-        # 因此用 winload.exe/efi 的版本号来判断是否支持 sha256
+        # the earliest KB4039648 and KB3033929 both support sha256
+        # the winload.exe/efi version is >= the ci.dll version,
+        # so use the winload.exe/efi version to decide whether sha256 is supported
 
         apk add pev
         local maj min build rev
@@ -5627,14 +5627,14 @@ install_windows() {
         # https://support.microsoft.com/kb/KB4039648
         # https://catalog.update.microsoft.com/Search.aspx?q=KB4039648
 
-        # win7/2008r2 网页有列出文件版本号
+        # the win7/2008r2 page lists the file version numbers
         # https://support.microsoft.com/kb/KB3033929
         # https://catalog.update.microsoft.com/Search.aspx?q=KB3033929
 
-        # rev 1xxxx 是 GDR 分支
-        # rev 2xxxx 是 LDR 分支
+        # rev 1xxxx is the GDR branch
+        # rev 2xxxx is the LDR branch
 
-        # vista/2008 版本从 6002 到 6003, rev 减少 4000
+        # for vista/2008 the version goes from 6002 to 6003 and the rev drops by 4000
         # https://support.microsoft.com/topic/1335e4d4-c155-52eb-4a45-b85bd1909ca8
 
         if is_efi; then
@@ -5670,36 +5670,36 @@ install_windows() {
     echo "-------------------------"
     echo
 
-    # 复制 boot.wim 到 /os，用于临时编辑
+    # Copy boot.wim into /os for temporary editing
     if [ -n "$boot_wim" ]; then
-        # 自定义 boot.wim 链接
+        # custom boot.wim link
         download "$boot_wim" /os/boot.wim
     else
         cp /iso/$sources_boot_wim /os/boot.wim
     fi
 
-    # efi 启动目录为 efi 分区
-    # bios 启动目录为 os 分区
+    # for efi the boot directory is the efi partition
+    # for bios it is the os partition
     if is_efi; then
         boot_dir=/os/boot/efi
     else
         boot_dir=/os
     fi
 
-    # 复制 iso 根目录 boot 开头的文件
+    # Copy the files starting with boot from the iso root
     echo 'Copying boot files...'
     find /iso -maxdepth 1 -iname 'boot*' -exec cp -r {} "$boot_dir" \;
 
-    # efi 额外复制 iso 根目录 efi 文件夹
+    # for efi, also copy the efi folder from the iso root
     if is_efi; then
         echo 'Copying efi files...'
         find /iso -maxdepth 1 -type d -iname efi -exec cp -r {} "$boot_dir" \;
     fi
 
-    # 复制iso全部文件(除了boot.wim)到installer分区
+    # Copy every iso file (except boot.wim) to the installer partition
     echo 'Copying installer files...'
     if false; then
-        # 还需忽略大小写
+        # case must be ignored as well
         rsync -rv \
             --exclude=/sources/boot.wim \
             --exclude=/sources/install.wim \
@@ -5718,24 +5718,24 @@ install_windows() {
         )
     fi
 
-    # $iso_image_index 是原 iso 里面的镜像 wim 编号
-    # $image_index 是复制到 installer 后的镜像 wim 编号
+    # $iso_image_index is the image wim index inside the original iso
+    # $image_index is the image wim index after copying to installer
 
-    # 如果是 swm，要先合并成 wim 才能编辑
+    # a swm must be merged into a wim before it can be edited
     if $is_swm; then
         install_wim=$(echo "$install_wim" | sed 's/\.swm$/.wim/i')
-        # 防止不格盘二次运行时报错：文件已存在
+        # avoid the "file already exists" error on a second run without reformatting
         rm -f "$install_wim"
         wimexport --ref="$(dirname "$iso_install_wim")/$swm_ref" "$iso_install_wim" "$iso_image_index" "$install_wim"
-        # 只导出了要安装的镜像，因此 image_index 为 1
+        # only the image being installed was exported, so image_index is 1
         image_index=1
     elif false; then
-        # 优化 install.wim
-        # 优点: 可以节省 200M~600M 空间，用来创建虚拟内存
-        #       （意义不大，因为已经删除了 boot.wim 用来创建虚拟内存，vista 除外）
-        # 缺点: 如果 install.wim 只有一个镜像，则只能缩小 10M+
+        # Optimize install.wim
+        # upside: saves 200M~600M that can be used for the pagefile
+        #         (of little value, since boot.wim was already deleted for that purpose, except on vista)
+        # downside: if install.wim holds only one image, it shrinks by just 10M or so
         time wimexport --threads "$(get_build_threads 512)" "$iso_install_wim" "$iso_image_index" "$install_wim"
-        # 只导出了要安装的镜像，因此 image_index 为 1
+        # only the image being installed was exported, so image_index is 1
         image_index=1
         info "install.wim size"
         echo "Original:  $(get_filesize_mb "$iso_install_wim")"
@@ -5746,33 +5746,33 @@ install_windows() {
         image_index="$iso_image_index"
     fi
 
-    # win11 要求 1GHz 2核（1核超线程也行）
-    # 判断条件是 install.wim 元信息里的 Installation Type，而不是 install.wim 注册表里面的
-    # 7601.24214.180801-1700.win7sp1_ldr_escrow_CLIENT_ULTIMATE_x64FRE_en-us.iso wim 没有 Installation Type
-    # Vista wim 和 注册表 都没有 InstallationType
+    # win11 requires 1GHz and 2 cores (one core with hyperthreading also counts)
+    # the check uses the Installation Type in the install.wim metadata, not the one in its registry
+    # 7601.24214.180801-1700.win7sp1_ldr_escrow_CLIENT_ULTIMATE_x64FRE_en-us.iso has no Installation Type in the wim
+    # Vista has InstallationType in neither the wim nor the registry
     installation_type_from_install_wim_metadata=$(get_selected_image_prop "Installation Type" 2>/dev/null || true)
 
-    # 安装时无法用注册表绕过
+    # the registry cannot be used to bypass this during installation
     # https://github.com/pbatard/rufus/issues/1990
     # https://learn.microsoft.com/windows/iot/iot-enterprise/Hardware/System_Requirements
-    # win11 旧版本安装程序（24h2之前）无法用 setup.exe /product server 跳过 cpu 核数限制，因此在xml里解除限制
+    # older win11 installers (before 24h2) cannot skip the core-count check with setup.exe /product server, so it is lifted in the xml
 
-    # windows 11 multi-session 用注册表的信息识别成 server 2022 用于匹配驱动，"$product_ver" 是 2022 而不是 11
-    # 因此这里判断的条件不是 [ "$product_ver" = "11" ]
+    # windows 11 multi-session is identified as server 2022 from the registry for driver matching, so "$product_ver" is 2022 rather than 11
+    # hence the condition here is not [ "$product_ver" = "11" ]
     if [ "$build_ver" -ge 22000 ] &&
         [ "$(echo "$installation_type_from_install_wim_metadata" | to_lower)" = "client" ] &&
         [ "$(nproc)" -le 1 ]; then
         wiminfo "$install_wim" "$image_index" --image-property WINDOWS/INSTALLATIONTYPE=Server
     fi
 
-    # 变量名     使用场景
-    # arch_uname arch命令 / uname -m                      x86_64   aarch64
+    # variable    where it is used
+    # arch_uname  the arch command / uname -m           x86_64   aarch64
     # arch_wim   wiminfo                             x86  x86_64   ARM64
     # arch       virtio iso / unattend.xml / .inf    x86  amd64    arm64
-    # arch_xdd   virtio msi / xen驱动                x86   x64
-    # arch_dd    华为云驱动                           32    64
+    # arch_xdd    virtio msi / xen drivers        x86      x64
+    # arch_dd     huawei cloud drivers            32       64
 
-    # 将 wim 的 arch 转为驱动和应答文件的 arch
+    # Convert the wim arch into the arch used by drivers and the answer file
     case "$arch_wim" in
     x86)
         arch=x86
@@ -5786,27 +5786,27 @@ install_windows() {
         ;;
     arm64)
         arch=arm64
-        arch_xdd= # xen 没有 arm64 驱动，# virtio 也没有 arm64 msi
-        arch_dd=  # 华为云没有 arm64 驱动
+        arch_xdd= # xen 没有 arm64 驱动，# xen has no arm64 driver, and virtio has no arm64 msi either
+        arch_dd=  # huawei cloud has no arm64 driver
         ;;
     esac
 
-    # win7 drvload 可以加载 sha256 签名的驱动
-    # 但系统安装完重启报错 windows cannot verify the digital signature for this file
-    # 需要按 F8 禁用驱动签名
+    # win7 drvload can load sha256-signed drivers,
+    # but after the install completes the reboot fails with: windows cannot verify the digital signature for this file
+    # F8 must be pressed to disable driver signature enforcement
 
     add_drivers() {
         info "Add drivers"
 
-        # 驱动下载临时文件夹
+        # temporary folder for driver downloads
         drv=/os/drivers
         mkdir_clear "$drv"
 
-        # 这里有坑
-        # $(get_cloud_vendor) 调用了 cache_dmi_and_virt
-        # 但是 $(get_cloud_vendor) 运行在 subshell 里面
-        # subshell 运行结束后里面的变量就消失了
-        # 因此先运行 cache_dmi_and_virt
+        # a trap here:
+        # $(get_cloud_vendor) calls cache_dmi_and_virt
+        # but $(get_cloud_vendor) runs in a subshell,
+        # and the variables set inside vanish when the subshell exits,
+        # so run cache_dmi_and_virt first
         cache_dmi_and_virt
         vendor="$(get_cloud_vendor)"
 
@@ -5816,12 +5816,12 @@ install_windows() {
                 add_driver_aliyun_virtio
             elif [ "$vendor" = qcloud ] && is_nt_ver_ge 6.1 && [ "$arch_wim" = x86_64 ]; then
                 add_driver_qcloud_virtio
-            # 未测试是否需要专用驱动
+            # untested whether a dedicated driver is required
             elif false && [ "$vendor" = huawei ] && is_nt_ver_ge 6.0 && { [ "$arch_wim" = x86 ] || [ "$arch_wim" = x86_64 ]; }; then
                 add_driver_huawei_virtio
 
-            # gcp 官方驱动不全，需要用公版补全
-            # 官方 windows server 模板没有 viorng 设备，但 linux 模板有
+            # the official gcp drivers are incomplete, so fill the gaps with the generic ones
+            # the official windows server template has no viorng device, but the linux template does
             elif [ "$vendor" = gcp ] && is_nt_ver_ge 6.1 && [ "$arch_wim" = x86 ] && $support_sha256; then
                 add_driver_gcp_virtio
                 add_driver_generic_virtio \( -iname viorng.inf -or -iname pvpanic.inf \)
@@ -5835,14 +5835,14 @@ install_windows() {
                 add_driver_generic_virtio \( -iname viorng.inf -or -iname balloon.inf \)
 
             else
-                # 兜底
+                # fallback
                 add_driver_generic_virtio
             fi
         fi
 
         # xen
         if is_virt_contains xen; then
-            # generic_xen 兜底，但未签名，暂停使用
+            # generic_xen as a fallback, but it is unsigned, so it is disabled for now
             if is_nt_ver_ge 6.1 && [ "$arch_wim" = x86_64 ]; then
                 add_driver_aws_xen
             elif is_nt_ver_ge 6.0 && { [ "$arch_wim" = x86 ] || [ "$arch_wim" = x86_64 ]; }; then
@@ -5851,36 +5851,36 @@ install_windows() {
         fi
 
         # vmd
-        # RST v17 不支持 vmd
-        # RST v18 inf 要求 15063 或以上
-        # RST v19 inf 要求 15063 或以上，包含 v18 全部硬件 id
-        # RST v20 inf 要求 19041 或以上
-        # RST v21 inf 要求 19041 或以上
+        # RST v17 does not support vmd
+        # the RST v18 inf requires 15063 or newer
+        # the RST v19 inf requires 15063 or newer and covers every hardware id in v18
+        # the RST v20 inf requires 19041 or newer
+        # the RST v21 inf requires 19041 or newer
         if [ -d /sys/module/vmd ] && [ "$build_ver" -ge 15063 ] && [ "$arch_wim" = x86_64 ]; then
             add_driver_vmd
         fi
 
-        # 主网卡，有 IP 地址
+        # the primary NIC, which has an IP address
         # root@localhost:~# get_drivers /sys/class/net/eth0
         # hv_netvsc
 
-        # 加速网卡，无 IP 地址
+        # the accelerated NIC, which has no IP address
         # root@localhost:~# get_drivers /sys/class/net/enP30832s1
         # mana
         # pci_hyperv
 
         # vpci
-        # 对应 linux 的 pci_hyperv
-        # win10 ltsc 2021 boot.wim 没有 vpci.sys，导致找不到 azure nvme 硬盘
-        # 要从 install.wim 提取
-        # PE 下不用上网，因此不需要检测网卡是否用 pci_hyperv
+        # the equivalent of pci_hyperv on linux
+        # the win10 ltsc 2021 boot.wim has no vpci.sys, so the azure nvme disk is not found
+        # it has to be extracted from install.wim
+        # PE needs no network, so there is no need to check whether the NIC uses pci_hyperv
         if [ -d /sys/module/pci_hyperv ] &&
             get_drivers "/sys/block/$xda" | grep -qx pci_hyperv &&
             ! find_file_ignore_case /wim/Windows/System32/drivers/vpci.sys >/dev/null 2>&1; then
             add_driver_vpci
         fi
 
-        # 厂商驱动
+        # vendor drivers
         case "$vendor" in
         aws)
             if is_nt_ver_ge 6.1 && { [ "$arch_wim" = x86_64 ] || [ "$arch_wim" = arm64 ]; }; then
@@ -5888,27 +5888,27 @@ install_windows() {
             fi
             ;;
         azure)
-            # inf 不限版本，未测试
+            # the inf has no version restriction; untested
             if [ "$arch_wim" = x86 ] || [ "$arch_wim" = x86_64 ]; then
                 add_driver_azure
             fi
             ;;
         gcp)
-            # inf 不限版本，6.0 能装但用不了
-            # x86 x86_64 arm64 都有
+            # the inf has no version restriction; 6.0 installs but does not work
+            # available for x86, x86_64 and arm64
             add_driver_gcp
             ;;
         esac
 
-        # intel 网卡驱动
-        # 官网没有提供 vista/2008 驱动
-        # win7 驱动 inf/ndis 不支持 vista/2008
+        # intel NIC drivers
+        # the official site offers no vista/2008 driver
+        # the win7 driver inf/ndis does not support vista/2008
         if is_nt_ver_ge 6.1 && { [ "$arch_wim" = x86 ] || [ "$arch_wim" = x86_64 ]; } &&
             grep -iq 8086 /sys/class/net/e*/device/vendor; then
             add_driver_intel_nic
         fi
 
-        # 自定义驱动
+        # custom drivers
         add_driver_custom
     }
 
@@ -5925,19 +5925,19 @@ install_windows() {
         url=$(
             case "$product_ver" in
             '7' | '2008 r2')
-                # 现在官网只有 25.0
-                # 25.0 比 24.5 只更新了 ProSet 软件，驱动相同
-                # 25.0 有部分文件是 sha256 签名
-                # 24.3 全部文件是 sha1 签名
+                # the official site now only has 25.0
+                # 25.0 only updates the ProSet software over 24.5; the drivers are identical
+                # some 25.0 files are sha256 signed
+                # every 24.3 file is sha1 signed
                 # https://web.archive.org/web/20250405130938/https://www.intel.com/content/www/us/en/download/15590/29323/intel-network-adapter-driver-for-windows-7-final-release.html
                 echo https://downloadmirror.intel.com/18713/eng/prowin${arch_intel}legacy.exe
                 ;;
             '8' | '8.1')
-                # 之前有 Intel® Network Adapter Driver for Windows 8* - Final Release ，版本 22.7.1
-                # 但已被删除，原因不明
+                # there used to be Intel(R) Network Adapter Driver for Windows 8* - Final Release, version 22.7.1,
+                # but it was removed for reasons unknown
                 # https://web.archive.org/web/20250501043104/https://www.intel.com/content/www/us/en/download/16765/intel-network-adapter-driver-for-windows-8-final-release.html
-                # 27.8 有 NDIS63 文件夹，意味着支持 Windows 8
-                # 27.8 相比 22.7.1，可能有些老设备不支持了，但我们不管了
+                # 27.8 has an NDIS63 folder, which means Windows 8 is supported
+                # 27.8 may drop support for some older devices compared with 22.7.1, but that is acceptable
                 echo https://downloadmirror.intel.com/764813/Wired_driver_27.8_${arch_intel}.zip
                 ;;
             '2012' | '2012 r2')
@@ -5965,14 +5965,14 @@ install_windows() {
             esac
         )
 
-        # 注意 intel 禁止了 aria2 下载
-        # 还使用了 aws waf，要用浏览器通过 js 获取 aws-waf-token cookie 才能下载
+        # note that intel blocks aria2 downloads
+        # and uses aws waf, so a browser must fetch the aws-waf-token cookie via js before downloading
         download_via_browser "$url" $drv/intel.zip
 
-        # inf 可能是 UTF-16 LE？因此用 rg 搜索
-        # 用 busybox unzip 解压 win10 驱动时，路径和文件名会粘在一起
-        # 但解压 28.0 驱动时，依然会出现这个问题
-        # 因此需要 convert_backslashes
+        # the inf may be UTF-16 LE, hence searching with rg
+        # extracting the win10 driver with busybox unzip glues the path and filename together
+        # and extracting the 28.0 driver still hits the same problem,
+        # so convert_backslashes is needed
         apk add unzip ripgrep
 
         # https://superuser.com/questions/1382839/zip-files-expand-with-backslashes-on-linux-no-subdirectories
@@ -5986,9 +5986,9 @@ install_windows() {
             done
         }
 
-        # win7 驱动是 .exe 解压不会报错
-        # win10 驱动是 .zip 解压反而会报错，目测 zip 文件有问题
-        # 在 windows 下解压 win8 的驱动会提示 checksum 错误
+        # the win7 driver is an .exe and extracts without error
+        # the win10 driver is a .zip and errors out instead; the zip file looks malformed
+        # extracting the win8 driver on windows reports a checksum error
         unzip -o -d $drv/intel/ $drv/intel.zip || true
         convert_backslashes $drv/intel
 
@@ -5996,25 +5996,25 @@ install_windows() {
             find $drv/intel -ipath "*/*.inf" | grep . >/dev/null
         }
 
-        # Wired_driver_28.0_x64.zip 需要二次解压
+        # Wired_driver_28.0_x64.zip needs extracting twice
         if ! is_have_inf_in_intel_dir; then
             unzip -o -d $drv/intel/ $drv/intel/Wired_driver_*.exe || true
             convert_backslashes $drv/intel
         fi
 
-        # 由于上面使用了 || true，因此确认下解压后是否有 inf 文件
+        # since || true was used above, confirm an inf file actually appeared
         if ! is_have_inf_in_intel_dir; then
             error_and_exit "No .inf file found in intel driver package"
         fi
 
-        # Vista RTM 版本号是 6000    NDIS 6.0
-        # 2008  RTM 版本号是 6001    NDIS 6.1
+        # Vista RTM is version 6000    NDIS 6.0
+        # 2008  RTM is version 6001    NDIS 6.1
 
-        # 找出驱动文件夹对应的最低系统版本
-        # 1. 驱动可能限制 windows client/server，但我们不区分
-        #    如果装不了也没关系。如果能装但不加载，用户也可以在硬件管理器强制加载驱动
-        # 2. 官网写着 win10 驱动要求 RS5 1809，但是驱动包里有 NDIS65 文件夹，也就是支持 10240
-        # 3. 有可能 NDIS65 文件夹实际要求 NDIS 6.51？但是先不管
+        # Work out the lowest system version each driver folder supports
+        # 1. a driver may restrict itself to windows client or server, but we do not distinguish
+        #    if it will not install, no harm done; if it installs but does not load, the user can force it in device manager
+        # 2. the site says the win10 driver needs RS5 1809, but the package has an NDIS65 folder, i.e. 10240 is supported
+        # 3. the NDIS65 folder may really require NDIS 6.51, but leave that for now
         # https://learn.microsoft.com/en-us/windows-hardware/drivers/network/overview-of-ndis-versions
         min_support_map=$(cat <<EOF |
 6000  NDIS60
@@ -6056,13 +6056,13 @@ EOF
 
             while read -r min_ver ndis; do
                 if [ "$build_ver" -ge "$min_ver" ]; then
-                    # 只支持 PE?
-                    # 有   intel\Release_30.0.zip\PROXGB\Win32\NDIS68\WinPE\*.inf
-                    # 没有 intel\Release_30.0.zip\PROXGB\Win32\NDIS68\*.inf
+                    # PE only?
+                    # present:  intel\Release_30.0.zip\PROXGB\Win32\NDIS68\WinPE\*.inf
+                    # absent:   intel\Release_30.0.zip\PROXGB\Win32\NDIS68\*.inf
 
-                    # find 只要 $drv/intel 存在返回码就是 0
-                    # rg 无需 -E
-                    # 非 WinPE 优先
+                    # find exits 0 as long as $drv/intel exists
+                    # rg does not need -E
+                    # prefer the non-WinPE one
                     if infs=$(find $drv/intel -ipath "*/Win$arch_intel/$ndis/*.inf" -exec rg -iwl "$compatible_ids" {} \; | grep . ||
                         find $drv/intel -ipath "*/Win$arch_intel/$ndis/WinPE/*.inf" -exec rg -iwl "$compatible_ids" {} \; | grep .); then
                         for inf in $infs; do
@@ -6071,7 +6071,7 @@ EOF
                         break
                     fi
                 fi
-            done < <(echo "$min_support_map" | tac) # 倒序
+            done < <(echo "$min_support_map" | tac) # reverse order
         done
 
         apk del unzip ripgrep
@@ -6083,10 +6083,10 @@ EOF
     add_driver_aws() {
         info "Add drivers: AWS"
 
-        # 未打补丁的 win7 无法使用 sha256 签名的驱动
+        # an unpatched win7 cannot use sha256-signed drivers
         nvme_ver=$(
             case "$nt_ver" in
-            6.1) echo 1.3.2 ;; # sha1 签名
+            6.1) echo 1.3.2 ;; # sha1 signature
             6.2 | 6.3) echo 1.5.1 ;;
             *) echo Latest ;;
             esac
@@ -6102,7 +6102,7 @@ EOF
 
         [ "$arch_wim" = arm64 ] && arch_dir=/ARM64 || arch_dir=
 
-        # arm64 的 AWSNVMe.zip 已从服务器删除
+        # the arm64 AWSNVMe.zip has been removed from the server
         if ! [ "$arch_wim" = arm64 ]; then
             download "$(get_aws_repo)/NVMe$arch_dir/$nvme_ver/AWSNVMe.zip" $drv/AWSNVMe.zip
             unzip -o -d $drv/aws/ $drv/AWSNVMe.zip
@@ -6125,7 +6125,7 @@ EOF
         x86) override=s ;;    # skip
         x86_64) override=a ;; # always
         esac
-        # 排除 $PLUGINSDIR $TEMP
+        # exclude $PLUGINSDIR and $TEMP
         exclude='$*'
         7z x $drv/Citrix_xensetup.exe -o$drv/xen/ -ao$override -x!$exclude
 
@@ -6139,13 +6139,13 @@ EOF
 
         apk add msitools
 
-        # 8.4.3+ 的 xenbus 驱动挑创建实例时的初始系统
-        # 初始系统为 windows 的实例支持 8.4.3+
-        # 初始系统为 linux 的实例不支持 8.4.3+
+        # the 8.4.3+ xenbus driver is picky about the OS the instance was created with
+        # instances created from windows support 8.4.3+
+        # instances created from linux do not
 
-        # 初始系统为 linux + 安装 8.4.3
-        # 如果用 msi 安装，则不会启用 xenbus，结果是能启动但无法上网
-        # 如果通过 inf 安装，则会启用 xenbus，结果是无法启动
+        # created from linux + installing 8.4.3:
+        # installing via msi does not enable xenbus, so it boots but has no network
+        # installing via inf does enable xenbus, so it does not boot at all
 
         apk add lscpu
         hypervisor_vendor=$(lscpu | grep 'Hypervisor vendor:' | awk '{print $3}')
@@ -6156,14 +6156,14 @@ EOF
             6.1) $support_sha256 && echo 8.3.5 || echo 8.3.2 ;;
             6.2 | 6.3)
                 case "$hypervisor_vendor" in
-                Xen) echo 8.3.5 ;;       # 实例初始系统为 Linux
-                Microsoft) echo 8.4.3 ;; # 实例初始系统为 Windows
+                Xen) echo 8.3.5 ;;       # instance originally created from Linux
+                Microsoft) echo 8.4.3 ;; # instance originally created from Windows
                 esac
                 ;;
             *)
                 case "$hypervisor_vendor" in
-                Xen) echo 8.3.5 ;;        # 实例初始系统为 Linux
-                Microsoft) echo Latest ;; # 实例初始系统为 Windows
+                Xen) echo 8.3.5 ;;        # instance originally created from Linux
+                Microsoft) echo Latest ;; # instance originally created from Windows
                 esac
                 ;;
             esac
@@ -6192,7 +6192,7 @@ EOF
     # https://pvupdates.vmd.citrix.com/autoupdate.v2.json 9.4.0.146
     # https://support.citrix.com/s/article/CTX235403-updates-to-xenserver-vm-tools-for-windows-for-xenserver-and-citrix-hypervisor
 
-    # 最高版本
+    # highest version
     # 2012 r2   9.3.1
     # 2012      9.3.0
     # 2008 (r2) 7.2.0.1555
@@ -6206,11 +6206,11 @@ EOF
     # http://downloadns.citrix.com.edgesuite.net/14655/managementagentx86.msi
 
     # xen
-    # 没签名，暂时用aws的驱动代替
+    # unsigned, so the aws driver is used instead for now
     # https://lore.kernel.org/xen-devel/E1qKMmq-00035B-SS@xenbits.xenproject.org/
     # https://xenbits.xenproject.org/pvdrivers/win/
-    # 在 aws t2 上测试，安装 xenbus 会蓝屏，装了其他7个驱动后，能进系统但没网络
-    # 但 aws 应该用aws官方xen驱动，所以测试仅供参考
+    # tested on aws t2: installing xenbus blue-screens; with the other seven drivers it boots but has no network
+    # but aws should use the official aws xen drivers, so this test is only indicative
     add_driver_generic_xen() {
         info "Add drivers: Generic Xen"
 
@@ -6229,17 +6229,17 @@ EOF
     add_driver_generic_virtio() {
         info "Add drivers: Generic virtio"
 
-        # 要区分 win10 / win11 驱动，虽然他们的 NT 版本号都是 10.0，但驱动文件有区别
+        # the win10 and win11 drivers must be distinguished: their NT version is both 10.0, but the driver files differ
         # https://github.com/virtio-win/kvm-guest-drivers-windows/commit/9af43da9e16e2d4bf4ea4663cdc4f29275fff48f
         # vista >>> 2k8
         # 10 >>> w10
         # 2012 r2 >>> 2k12R2
         virtio_sys=$(
-            # 没有 vista 文件夹
+            # there is no vista folder
             if [ "$product_ver" = vista ]; then
                 echo 2k8
 
-            # 2k16 2k19 2k22 文件夹没有 arm64 驱动
+            # the 2k16, 2k19 and 2k22 folders have no arm64 drivers
             elif { [ "$product_ver" = 2016 ] || [ "$product_ver" = 2019 ] || [ "$product_ver" = 2022 ]; } &&
                 [ "$arch_wim" = arm64 ]; then
                 echo w10
@@ -6252,34 +6252,34 @@ EOF
             fi
         )
 
-        # win7-drivers 分支 win7 文件夹只有一次提交，也就是 173 全家桶
+        # on the win7-drivers branch the win7 folder has a single commit, i.e. the 173 bundle
         # 1. 2020.1.24 https://github.com/virtio-win/virtio-win-pkg-scripts/tree/win7-drivers/data/old-drivers/Win7
 
-        # master 分支 win7 文件夹有 3 次提交，从古到今
+        # on master the win7 folder has 3 commits, oldest to newest:
         # https://github.com/virtio-win/virtio-win-pkg-scripts/commits/master/data/old-drivers/Win7
-        # 1. 2020/6/4  sha256，176 全家桶，相当于没发布的 176 iso
-        # 2. 2020/8/10 将部分文件降到 17400，相当于 189~215 iso
-        # 3. 2022/4/14 将部分文件降级，相当于 217~最新版 iso
+        # 1. 2020/6/4  sha256, the 176 bundle, equivalent to the unreleased 176 iso
+        # 2. 2020/8/10 some files downgraded to 17400, equivalent to the 189~215 isos
+        # 3. 2022/4/14 some files downgraded, equivalent to the 217~latest isos
 
-        # 可改成直接从 github commit 下载 win7 173(sha1) 176(sha256) 全家桶？
+        # could this download the win7 173(sha1) and 176(sha256) bundles straight from a github commit?
         # 国内可使用 jsdelivr 加速 github
 
         # 2k12
         # https://github.com/virtio-win/virtio-win-pkg-scripts/issues/61
-        # 217 ~ 271    2k12 证书有问题，红帽的 virtio-win-1.9.45 没问题
+        # 217 ~ 271    the 2k12 certificate is broken; red hat virtio-win-1.9.45 is fine
 
         # win7
         # https://fedorapeople.org/groups/virt/virtio-win/repo/stable/
         # https://github.com/virtio-win/virtio-win-pkg-scripts/issues/40
-        # 171-1     sha1   稳定版
-        # 173-9     sha1   对应上面的 win7-drivers 分支，最后一次编译 win7 + sha1，但不是稳定版?
-        # 176       sha256 对应上面的 master-1  最后一次编译 win7，从这次开始是 sha256，此次不提供 iso，编译的文件在之后的 iso 可以找到
-        # 185 ~ 187 sha256 正常工作，win7 文件来自 176
-        # 189 ~ 215 sha1   对应上面的 master-2  气球版本 17400，vultr 死机
-        # 217 ~ 271 sha1   对应上面的 master-3  甲骨文 vioscsi 因硬件 ID 不同用不了，红帽的 virtio-win-1.9.45 也是
+        # 171-1     sha1   stable
+        # 173-9     sha1   matches the win7-drivers branch above, the last win7 + sha1 build, but not a stable release?
+        # 176       sha256 matches master-1, the last win7 build and the first sha256 one; no iso was published, but the files appear in later isos
+        # 185 ~ 187 sha256 works correctly, the win7 files come from 176
+        # 189 ~ 215 sha1   matches master-2, balloon version 17400, hangs on vultr
+        # 217 ~ 271 sha1   matches master-3, the Oracle vioscsi is unusable because its hardware ID differs, as is red hat virtio-win-1.9.45
 
-        # 甲骨文 vioscsi 硬件 ID 是 PCI\VEN_1AF4&DEV_1004&SUBSYS_0008108E&REV_00
-        # SUBSYS 的厂商 ID 是甲骨文
+        # the Oracle vioscsi hardware ID is PCI\VEN_1AF4&DEV_1004&SUBSYS_0008108E&REV_00
+        # where the SUBSYS vendor ID is Oracle
 
         # virtio-win-0.1.173-9
         # %VirtioScsi.DeviceDesc% = scsi_inst, PCI\VEN_1AF4&DEV_1004&SUBSYS_00081AF4&REV_00, PCI\VEN_1AF4&DEV_1004
@@ -6317,7 +6317,7 @@ EOF
             local checksum=$1/stable-virtio/CHECKSUM
             local dir
 
-            # 直接读取 CHECKSUM 可以兼容 fedorapeople 跳转和提供文件内容的镜像源
+            # reading CHECKSUM directly works with both the fedorapeople redirect and mirrors that serve the content
             if dir=$(wget "$checksum" -O- |
                 grep -Eo -m1 'virtio-win-[0-9][^[:space:]]+\.noarch\.rpm' |
                 sed -E 's,^virtio-win-(.*)\.noarch\.rpm$,archive-virtio/virtio-win-\1,' |
@@ -6326,7 +6326,7 @@ EOF
                 return
             fi
 
-            # 保留 Location 解析作为兼容逻辑
+            # keep the Location parsing as a compatibility path
             if dir=$(wget --spider -S "$checksum" 2>&1 >/dev/null |
                 grep -E '^  Location: ' | grep -Ewo -m1 'archive-virtio/virtio-win-[^/]+'); then
                 echo "$dir"

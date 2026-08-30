@@ -2588,7 +2588,7 @@ download_cloud_init_config() {
     fi
 
     # swapfile
-    # 如果分区表中已经有swapfile就跳过，例如arch
+    # skip when the partition table already has a swapfile, e.g. arch
     if ! grep -w swap $os_dir/etc/fstab; then
         cat <<EOF >>$ci_file
 swap:
@@ -2604,7 +2604,7 @@ get_image_state() {
     local os_dir=$1
     local image_state=
 
-    # 如果 dd 镜像精简了 State.ini，则从注册表获取
+    # if the dd image trimmed State.ini, read it from the registry instead
     if state_ini=$(find_file_ignore_case $os_dir/Windows/Setup/State/State.ini); then
         image_state=$(grep -i '^ImageState=' $state_ini | cut -d= -f2 | tr -d '\r')
     fi
@@ -2630,7 +2630,7 @@ modify_windows() {
     # https://learn.microsoft.com/troubleshoot/azure/virtual-machines/reset-local-password-without-agent
     # https://learn.microsoft.com/windows-hardware/manufacture/desktop/add-a-custom-script-to-windows-setup
 
-    # 判断用 SetupComplete 还是组策略
+    # decide between SetupComplete and group policy
     image_state=$(get_image_state "$os_dir")
     echo "ImageState: $image_state"
 
@@ -2640,45 +2640,45 @@ modify_windows() {
         use_gpo=false
     fi
 
-    # bat 列表
+    # bat list
     bats=
 
-    # 1. rdp 端口
+    # 1. rdp port
     if is_need_change_rdp_port; then
         create_win_change_rdp_port_script $os_dir/windows-change-rdp-port.bat "$rdp_port"
         bats="$bats windows-change-rdp-port.bat"
     fi
 
-    # 2. 允许 ping
+    # 2. allow ping
     if is_allow_ping; then
         download $confhome/windows-allow-ping.bat $os_dir/windows-allow-ping.bat
         bats="$bats windows-allow-ping.bat"
     fi
 
-    # 3. 合并分区
-    # 可能 unattend.xml 已经设置了ExtendOSPartition，不过运行resize没副作用
+    # 3. merge partitions
+    # unattend.xml may already set ExtendOSPartition, but running resize does no harm
     download $confhome/windows-resize.bat $os_dir/windows-resize.bat
     bats="$bats windows-resize.bat"
 
-    # 4. 网络设置
+    # 4. network settings
     for ethx in $(get_eths); do
         create_win_set_netconf_script $os_dir/windows-set-netconf-$ethx.bat
         bats="$bats windows-set-netconf-$ethx.bat"
     done
 
-    # 5. 设置用户密码永不过期（仅限 iso 安装）
-    #    Azure 的 Windows 实例，初始用户的密码也是永不过期的
-    #    管理员账号默认不会过期
+    # 5. set the user password to never expire (iso install only)
+    #    on an Azure Windows instance the initial password also never expires
+    #    administrator accounts do not expire by default
     if [ "$distro" = "windows" ] && ! is_administrator_username "$username"; then
-        # 两种方法都可以，但语法很神奇
+        # both forms work, but the syntax is peculiar
 
-        # 第二行前面不能有空格
+        # the second line must have no leading space
         cat <<EOF >$os_dir/windows-set-user-password-never-expires.bat
 wmic useraccount where name="$username" set passwordexpires=false || ^
 powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Set-LocalUser -Name '$username' -PasswordNeverExpires \$true"
 del "%~f0"
 EOF
-        # 第二行 || 前面必须有空格
+        # the second line must have a space before ||
         cat <<EOF >$os_dir/windows-set-user-password-never-expires.bat
 wmic useraccount where name="$username" set passwordexpires=false ^
   || powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Set-LocalUser -Name '$username' -PasswordNeverExpires \$true"
@@ -2698,8 +2698,8 @@ EOF
         mkdir -p "$os_dir/frpc/"
         url=$(get_frpc_url windows "$nt_ver" "$os_bit")
         download "$url" $os_dir/frpc/frpc.zip
-        # -j 去除文件夹
-        # -C 筛选文件时不区分大小写，但 busybox zip 不支持
+        # -j strips the folder
+        # -C matches filenames case-insensitively, but busybox zip does not support it
         unzip -o -j "$os_dir/frpc/frpc.zip" '*/frpc.exe' -d "$os_dir/frpc/"
         rm -f "$os_dir/frpc/frpc.zip"
         cp -f /configs/frpc.* "$os_dir/frpc/"
@@ -2709,12 +2709,12 @@ EOF
     fi
 
     if $use_gpo; then
-        # 使用组策略
+        # use group policy
         scripts_ini=$(get_path_in_correct_case $os_dir/Windows/System32/GroupPolicy/Machine/Scripts/scripts.ini)
         mkdir -p "$(dirname $scripts_ini)"
         gpt_ini=$(get_path_in_correct_case $os_dir/Windows/System32/GroupPolicy/gpt.ini)
 
-        # 备份 ini
+        # back up the ini
         for file in $gpt_ini $scripts_ini; do
             if [ -f $file ]; then
                 cp $file $file.orig
@@ -2739,7 +2739,7 @@ EOF
             echo '[Startup]' >>$scripts_ini
         fi
 
-        # 注意没用 pipefail 的话，错误码取自最后一个管道
+        # note that without pipefail the exit code comes from the last command in the pipe
         if num=$(grep -Eo '^[0-9]+' $scripts_ini | sort -n | tail -1 | grep .); then
             num=$((num + 1))
         else
@@ -2758,28 +2758,28 @@ EOF
         # windows-del-gpo.bat
         download $confhome/windows-del-gpo.bat $os_dir/windows-del-gpo.bat
     else
-        # 使用 SetupComplete
+        # use SetupComplete
         setup_complete=$(get_path_in_correct_case $os_dir/Windows/Setup/Scripts/SetupComplete.cmd)
         mkdir -p "$(dirname $setup_complete)"
 
-        # 添加到 C:\Setup\Scripts\SetupComplete.cmd 最前面
-        # call 防止子 bat 删除自身后中断主脚本
+        # prepend to C:\Setup\Scripts\SetupComplete.cmd
+        # call stops a child bat deleting itself and aborting the main script
         setup_complete_mod=$(mktemp)
         for bat in $bats; do
             echo "if exist %SystemDrive%\\$bat (call %SystemDrive%\\$bat)" >>$setup_complete_mod
         done
 
-        # 复制原来的内容
+        # copy the original content
         if [ -f $setup_complete ]; then
             cat $setup_complete >>$setup_complete_mod
         fi
 
         unix2dos $setup_complete_mod
 
-        # cat 可以保留权限
+        # cat preserves the permissions
         cat $setup_complete_mod >$setup_complete
 
-        # 查看最终内容
+        # show the final content
         cat -n $setup_complete
     fi
 }
@@ -2792,8 +2792,8 @@ get_axx64() {
 }
 
 is_file_or_link() {
-    # -e / -f 坏软连接，返回 false
-    # -L 坏软连接，返回 true
+    # -e / -f return false for a broken symlink
+    # -L returns true for a broken symlink
     [ -f $1 ] || [ -L $1 ]
 }
 
@@ -2823,21 +2823,21 @@ keep_now_resolv_conf() {
     rm -f $os_dir/etc/resolv.conf.orig
 }
 
-# 抄 https://github.com/alpinelinux/alpine-conf/blob/3.18.1/setup-disk.in#L421
+# Adapted from https://github.com/alpinelinux/alpine-conf/blob/3.18.1/setup-disk.in#L421
 get_alpine_firmware_pkgs() {
-    # 需要有 modloop，不然 modinfo 会报错
+    # modloop must be present, otherwise modinfo errors out
     ensure_service_started modloop >&2
 
-    # 如果不在单独的文件夹，则用 linux-firmware-other
-    # 如果在单独的文件夹，则用 linux-firmware-xxx
-    # 如果不需要 firmware，则用 linux-firmware-none
+    # if it is not in its own folder, use linux-firmware-other
+    # if it is in its own folder, use linux-firmware-xxx
+    # if no firmware is needed, use linux-firmware-none
     firmware_pkgs=$(
         cd /sys/module && modinfo -F firmware -- * 2>/dev/null |
             awk -F/ '{print $1 == $0 ? "linux-firmware-other" : "linux-firmware-"$1}' |
             sort -u
     )
 
-    # 使用 command 因为自己覆盖了 apk 添加了 >&2
+    # use command, because apk is overridden here to add >&2
     retry 5 command apk search --quiet --exact ${firmware_pkgs:-linux-firmware-none}
 }
 
@@ -2850,8 +2850,8 @@ get_ucode_firmware_pkgs() {
     esac
 
     case "$os-$(get_cpu_vendor)" in
-    # alpine 的 linux-firmware 以文件夹进行拆分
-    # setup-alpine 会自动安装需要的 firmware（modloop 没挂载则无效）
+    # alpine's linux-firmware is split into per-folder packages
+    # setup-alpine installs the required firmware automatically (which does not work without modloop mounted)
     # https://github.com/alpinelinux/alpine-conf/blob/3.18.1/setup-disk.in#L421
     alpine-intel) echo intel-ucode ;;
     alpine-amd) echo amd-ucode ;;
@@ -2865,7 +2865,7 @@ get_ucode_firmware_pkgs() {
     ubuntu-amd) echo linux-firmware amd64-microcode ;;
     ubuntu-*) echo linux-firmware ;;
 
-    # 无法同时安装 kernel-firmware kernel-firmware-intel
+    # kernel-firmware and kernel-firmware-intel cannot both be installed
     opensuse-intel) echo kernel-firmware ucode-intel ;;
     opensuse-amd) echo kernel-firmware ucode-amd ;;
     opensuse-*) echo kernel-firmware ;;
@@ -2891,12 +2891,12 @@ chroot_systemctl_disable() {
     shift
 
     for unit in "$@"; do
-        # 如果传进来的是x(没有.) 则改成 x.service
+        # if the argument has no dot, turn x into x.service
         if ! [[ "$unit" = "*.*" ]]; then
             unit=$i.service
         fi
 
-        # debian 10 返回值始终是 0
+        # debian 10 always exits 0
         if ! chroot $os_dir systemctl list-unit-files "$unit" 2>&1 | grep -Eq '^0 unit'; then
             chroot $os_dir systemctl disable "$unit"
         fi
@@ -2912,25 +2912,25 @@ remove_or_disable_cloud_init() {
 
     info "Remove or Disable Cloud-Init"
 
-    # ubuntu-server-minimal ubuntu-cloud-minimal 都包含 cloud-init
-    # 用 iso 安装的 ubuntu 也有 cloud-init
-    # 因此不删除 ubuntu 的 cloud-init，而是禁用它
+    # ubuntu-server-minimal and ubuntu-cloud-minimal both include cloud-init
+    # ubuntu installed from an iso has cloud-init as well
+    # so do not remove ubuntu's cloud-init, just disable it
 
-    # iso 安装首次启动是通过 /etc/cloud/cloud.cfg.d/99-installer.cfg 初始化系统，包括：
-    #     1. 创建普通用户和密码，添加 ssh 登录公钥
-    #     2. 创建 /etc/cloud/cloud-init.disabled
+    # on an iso install, the first boot initializes the system via /etc/cloud/cloud.cfg.d/99-installer.cfg, which:
+    #     1. creates the normal user and password and adds the ssh public key
+    #     2. creates /etc/cloud/cloud-init.disabled
 
     if grep -iq ubuntu $os_dir/etc/os-release; then
-        # 模仿 iso 安装的 ubuntu，只创建 cloud-init.disabled，不禁用服务
+        # mimic an iso-installed ubuntu: only create cloud-init.disabled, do not disable the services
         touch $os_dir/etc/cloud/cloud-init.disabled
     else
-        # systemctl is-enabled cloud-init-hotplugd.service 状态是 static
-        # disable 会出现一堆提示信息，也无法 disable
+        # systemctl is-enabled cloud-init-hotplugd.service reports static
+        # disable prints a pile of messages and cannot disable it anyway
         for unit in $(
             chroot $os_dir systemctl list-unit-files |
                 grep -E '^(cloud-init|cloud-init-.*|cloud-config|cloud-final)\.(service|socket)' | grep enabled | awk '{print $1}'
         ); do
-            # 服务不存在时会报错
+            # errors out when the service does not exist
             if chroot $os_dir systemctl -q is-enabled "$unit"; then
                 chroot $os_dir systemctl disable "$unit"
             fi
@@ -2944,15 +2944,15 @@ remove_or_disable_cloud_init() {
                     rm -f $os_dir/etc/cloud/cloud.cfg.rpmsave
                     ;;
                 zypper)
-                    # 防止删除 cloud-init 时自动删除 sudo
+                    # stop sudo being removed along with cloud-init
                     if ! [ "$username" = root ]; then
                         sed -i '/^sudo$/d' "$os_dir/var/lib/zypp/AutoInstalled"
                     fi
-                    # 加上 -u 才会删除依赖
+                    # -u is required for dependencies to be removed
                     chroot $os_dir zypper remove -y -u cloud-init cloud-init-config-suse
                     ;;
                 apt-get)
-                    # ubuntu 25.04 开始有 cloud-init-base
+                    # ubuntu 25.04 introduced cloud-init-base
                     chroot_apt_remove $os_dir cloud-init cloud-init-base
                     chroot_apt_autoremove $os_dir
                     ;;
@@ -2967,17 +2967,17 @@ disable_jeos_firstboot() {
     local os_dir=$1
     info "Disable JeOS Firstboot"
 
-    # 两种方法都可以
+    # both methods work
     # https://github.com/openSUSE/jeos-firstboot?tab=readme-ov-file#usage
 
     rm -rf $os_dir/var/lib/YaST2/reconfig_system
 
     for name in jeos-firstboot jeos-firstboot-snapshot; do
-        # 服务不存在时会报错
+        # errors out when the service does not exist
         chroot $os_dir systemctl disable "$name.service" 2>/dev/null || true
     done
 
-    # 可选
+    # optional
     # chroot $os_dir zypper remove -y -u jeos-firstboot
 }
 
@@ -2986,18 +2986,18 @@ create_network_manager_config() {
     local os_dir=$2
     info "Create Network-Manager config"
 
-    # 可以直接用 alpine 的 cloud-init 生成 Network Manager 配置
+    # alpine's cloud-init can generate the Network Manager configuration directly
     apk add cloud-init
     cloud-init devel net-convert -p "$source_cfg" -k yaml -d /out -D alpine -O network-manager
 
-    # 文档明确写了 ipv6.method=dhcp 无法获取网关
+    # the docs state explicitly that ipv6.method=dhcp cannot obtain a gateway
     # https://networkmanager.dev/docs/api/latest/nm-settings-nmcli.html#:~:text=false/no/off-,ipv6,-.method
     sed -i -e '/^may-fail=/d' -e 's/^method=dhcp/method=auto/' \
         /out/etc/NetworkManager/system-connections/cloud-init-eth*.nmconnection
 
-    # 删除 # Generated by cloud-init. Changes will be lost.
-    # 删除 org.freedesktop.NetworkManager.origin=cloud-init
-    # 并删除头部的空行
+    # remove "# Generated by cloud-init. Changes will be lost."
+    # remove org.freedesktop.NetworkManager.origin=cloud-init
+    # and remove the leading blank line
     sed -i \
         -e '/^# Generated by cloud-init/d' \
         -e '/^org\.freedesktop\.NetworkManager\.origin=cloud-init/d' \
@@ -3007,11 +3007,11 @@ create_network_manager_config() {
     cp /out/etc/NetworkManager/system-connections/cloud-init-eth*.nmconnection \
         $os_dir/etc/NetworkManager/system-connections/
 
-    # 清理
+    # Clean up
     rm -rf /out
     apk del cloud-init
 
-    # 最终显示文件
+    # Show the final file
     for file in "$os_dir"/etc/NetworkManager/system-connections/cloud-init-eth*.nmconnection; do
         cat -n "$file" >&2
     done
@@ -3030,7 +3030,7 @@ modify_linux() {
         fi
     }
 
-    # 修复 onlink 网关
+    # Fix the onlink gateway
     add_onlink_script_if_need() {
         for ethx in $(get_eths); do
             if is_staticv4 || is_staticv6; then
@@ -3044,35 +3044,35 @@ EOF
         done
     }
 
-    # 部分镜像有默认配置，例如 centos
+    # some images ship a default configuration, e.g. centos
     del_exist_sysconfig_NetworkManager_config $os_dir
 
-    # 仅 fedora (el/ol/国产fork 用的是复制文件方法)
-    # 1. 禁用 selinux kdump
-    # 2. 添加微码+固件
+    # fedora only (el/ol and their forks use the file-copy method)
+    # 1. disable selinux and kdump
+    # 2. add microcode and firmware
     if [ -f $os_dir/etc/redhat-release ]; then
-        # 防止删除 cloud-init / 安装 firmware 时不够内存
+        # avoid running out of memory while removing cloud-init / installing firmware
         create_swap_if_ram_less_than 2048 $os_dir/swapfile
 
         mount_pseudo_fs $os_dir
 
         # find_and_mount /boot
         # find_and_mount /boot/efi
-        # fedora 的 fstab 还有 /home /var，因此用 mount -a
-        # 不然无法往 /home/$username 写入 ssh 公钥
+        # the fedora fstab also has /home and /var, so use mount -a
+        # otherwise the ssh public key cannot be written to /home/$username
         chroot $os_dir mount -a
 
         cp_resolv_conf $os_dir
 
-        # 可以直接用 alpine 的 cloud-init 生成 Network Manager 配置
+        # alpine's cloud-init can generate the Network Manager configuration directly
         create_cloud_init_network_config /net.cfg
         create_network_manager_config /net.cfg "$os_dir"
         rm /net.cfg
 
-        # TODO: fedora 43 eol 后删除
-        # 删除 cloud-init 会删除依赖包 netcat
-        # 但是删除 netcat 时会报错
-        # 因此保留 netcat 包
+        # TODO: remove once fedora 43 is EOL
+        # removing cloud-init also removes its dependency netcat,
+        # but removing netcat errors out,
+        # so keep the netcat package
         # >>> Running %preun scriptlet: netcat-0:1.229-3.fc43.x86_64
         # >>> Error in %preun scriptlet: netcat-0:1.229-3.fc43.x86_64
         # >>> Scriptlet output:
@@ -3096,12 +3096,12 @@ EOF
     fi
 
     # debian
-    # 1. EOL 换源
-    # 2. 修复网络问题
-    # 3. 添加微码+固件
-    # 注意 ubuntu 也有 /etc/debian_version
+    # 1. switch repos when EOL
+    # 2. fix network problems
+    # 3. add microcode and firmware
+    # note that ubuntu also has /etc/debian_version
     if [ "$distro" = debian ]; then
-        # 修复 onlink 网关
+        # Fix the onlink gateway
         # add_onlink_script_if_need
 
         mount_pseudo_fs $os_dir
@@ -3111,14 +3111,14 @@ EOF
 
         remove_or_disable_cloud_init $os_dir
 
-        # 获取当前开启的 Components, 后面要用
+        # get the currently enabled Components, needed below
         if [ -f $os_dir/etc/apt/sources.list.d/debian.sources ]; then
             comps=$(grep ^Components: $os_dir/etc/apt/sources.list.d/debian.sources | head -1 | cut -d' ' -f2-)
         else
             comps=$(grep '^deb ' $os_dir/etc/apt/sources.list | head -1 | cut -d' ' -f4-)
         fi
 
-        # ELTS/CN 源处理
+        # ELTS repo handling
         if is_elts; then
             # ELTS
             wget https://deb.freexian.com/extended-lts/archive-key.gpg \
@@ -3139,29 +3139,29 @@ EOF
             fi
         fi
 
-        # 标记所有内核为自动安装
+        # mark every kernel as automatically installed
         pkgs=$(chroot $os_dir apt-mark showmanual linux-image* linux-headers*)
         chroot $os_dir apt-mark auto $pkgs
 
-        # 安装合适的内核
+        # install the appropriate kernel
         kernel_package=$kernel
         # shellcheck disable=SC2046
-        # 检测机器是否能用 cloud 内核
+        # check whether the machine can use the cloud kernel
         if [[ "$kernel_package" = 'linux-image-cloud-*' ]] &&
             ! sh /can_use_cloud_kernel.sh "$xda" $(get_eths); then
             kernel_package=$(echo "$kernel_package" | sed 's/-cloud//')
         fi
 
-        # 该方法包含了 apt-mark manual
+        # this function already does apt-mark manual
         chroot_apt_install $os_dir "$kernel_package"
 
-        # 使用 autoremove 删除非最佳内核
+        # use autoremove to drop the non-optimal kernels
         chroot_apt_autoremove $os_dir
 
-        # 微码+固件
+        # microcode + firmware
         if fw_pkgs=$(get_ucode_firmware_pkgs) && [ -n "$fw_pkgs" ]; then
-            #  debian 10 11 的 iucode-tool 在 contrib 里面
-            #  debian 12 的 iucode-tool 在 main 里面
+            #  on debian 10 and 11, iucode-tool is in contrib
+            #  on debian 12, iucode-tool is in main
             [ "$releasever" -ge 12 ] &&
                 comps_to_add=non-free-firmware ||
                 comps_to_add="contrib non-free"
@@ -3183,34 +3183,34 @@ EOF
             chroot_apt_install $os_dir $fw_pkgs
         fi
 
-        # genericcloud 删除以下文件开机时才会显示 grub 菜单
+        # on genericcloud the grub menu only appears at boot once these files are removed
         # https://salsa.debian.org/cloud-team/debian-cloud-images/-/tree/master/config_space/bookworm/files/etc/default/grub.d
         rm -f $os_dir/etc/default/grub.d/10_cloud.cfg
         rm -f $os_dir/etc/default/grub.d/15_timeout.cfg
         chroot $os_dir update-grub
 
         if true; then
-            # 如果使用 nocloud 镜像
+            # when using the nocloud image
             chroot_apt_install $os_dir openssh-server
         else
-            # 如果使用 genericcloud 镜像
+            # when using the genericcloud image
 
-            # 还原默认配置并创建 key
+            # restore the default configuration and create the key
             # cat $os_dir/usr/share/openssh/sshd_config $os_dir/etc/ssh/sshd_config
             # chroot $os_dir ssh-keygen -A
             rm -rf $os_dir/etc/ssh/sshd_config
             UCF_FORCE_CONFFMISS=1 chroot $os_dir dpkg-reconfigure openssh-server
         fi
 
-        # 镜像自带的网络管理器
+        # the network manager shipped in the image
         # debian 11 ifupdown
         # debian 12 netplan + networkd + resolved
-        # ifupdown dhcp 不支持 24位掩码+不规则网关?
+        # ifupdown dhcp does not support a /24 mask with an irregular gateway?
 
-        # 强制使用 netplan
+        # force the use of netplan
         if false && is_have_cmd_on_disk $os_dir netplan; then
             chroot_apt_install $os_dir netplan.io
-            # 服务不存在时会报错
+            # errors out when the service does not exist
             chroot $os_dir systemctl disable networking resolvconf 2>/dev/null || true
             chroot $os_dir systemctl enable systemd-networkd systemd-resolved
             rm_resolv_conf $os_dir
@@ -3227,18 +3227,18 @@ EOF
 
         create_ifupdown_config $os_dir/etc/network/interfaces
 
-        # ifupdown 不支持 rdnss
-        # 但 iso 安装不会安装 rdnssd，而是在安装时读取 rdnss 并写入 resolv.conf
+        # ifupdown does not support rdnss
+        # an iso install does not install rdnssd; it reads rdnss during installation and writes it to resolv.conf
         if false; then
             chroot_apt_install $os_dir rdnssd
         fi
 
-        # debian 10 11 云镜像安装了 resolvconf
-        # debian 12 云镜像安装了 netplan systemd-resolved
-        # 云镜像用了 cloud-init 自动配置网络，用户是无感的，因此官方云镜像可以随便选择网络管理器
-        # 但我们的系统安装后用户可能有手动配置网络的需求，因此用回 iso 安装时的网络管理器 ifupdown
+        # the debian 10 and 11 cloud images install resolvconf
+        # the debian 12 cloud image installs netplan and systemd-resolved
+        # the cloud images configure the network through cloud-init, which is invisible to the user, so the official images can pick any network manager
+        # but our users may want to configure the network by hand afterwards, so go back to ifupdown, the one an iso install uses
 
-        # 服务不存在时会报错
+        # errors out when the service does not exist
         chroot $os_dir systemctl disable resolvconf systemd-networkd systemd-resolved 2>/dev/null || true
 
         chroot_apt_install $os_dir ifupdown
@@ -3246,15 +3246,15 @@ EOF
         chroot_apt_autoremove $os_dir
         chroot $os_dir systemctl enable networking
 
-        # 静态时 networking 服务不会根据 /etc/network/interfaces 更新 resolv.conf
-        # 动态时使用了 isc-dhcp-client 支持自动更新 resolv.conf
-        # 另外 debian iso 不会安装 rdnssd
+        # when static, the networking service does not update resolv.conf from /etc/network/interfaces
+        # when dynamic, isc-dhcp-client is used and updates resolv.conf automatically
+        # note also that the debian iso does not install rdnssd
         keep_now_resolv_conf $os_dir
     fi
 
     # opensuse
-    # 1. kernel-default-base 缺少 nvme gve mlx5 mana 驱动，换成 kernel-default
-    # 2. 添加微码+固件
+    # 1. kernel-default-base lacks the nvme, gve, mlx5 and mana drivers, so switch to kernel-default
+    # 2. add microcode and firmware
     # https://documentation.suse.com/smart/virtualization-cloud/html/minimal-vm/index.html
     if grep -q opensuse $os_dir/etc/os-release; then
         create_swap_if_ram_less_than 1024 $os_dir/swapfile
@@ -3265,34 +3265,34 @@ EOF
 
         disable_jeos_firstboot $os_dir
 
-        # 禁用 selinux
+        # disable selinux
         disable_selinux $os_dir
 
-        # opensuse leap 16.0 / tumbleweed 用 NetworkManager
-        # 可以直接用 alpine 的 cloud-init 生成 Network Manager 配置
+        # opensuse leap 16.0 / tumbleweed use NetworkManager
+        # alpine's cloud-init can generate the Network Manager configuration directly
         create_cloud_init_network_config /net.cfg
         create_network_manager_config /net.cfg "$os_dir"
         rm /net.cfg
 
-        # 选择新内核
-        # 只有 leap 有 kernel-azure
+        # pick the new kernel
+        # only leap has kernel-azure
         if grep -iq leap $os_dir/etc/os-release && [ "$(get_cloud_vendor)" = azure ]; then
             target_kernel='kernel-azure'
         else
             target_kernel='kernel-default'
         fi
 
-        # rpm -qi 不支持通配符
+        # rpm -qi does not support wildcards
         origin_kernel=$(chroot $os_dir rpm -qa 'kernel-*' --qf '%{NAME}\n' | grep -v firmware)
         if ! [ "$(echo "$origin_kernel" | wc -l)" -eq 1 ]; then
             error_and_exit "Unexpected kernel installed: $origin_kernel"
         fi
 
-        # 16.0 能同时装 kernel-default-base 和 kernel-default
-        # tw 不能同时装 kernel-default-base 和 kernel-default
-        # 因此需要添加 --force-resolution 自动删除 kernel-default-base
+        # 16.0 can have kernel-default-base and kernel-default installed together
+        # tumbleweed cannot
+        # so --force-resolution is needed to remove kernel-default-base automatically
         if ! [ "$origin_kernel" = "$target_kernel" ]; then
-            # x86 必须设置一个密码，否则报错，arm 没有这个问题
+            # x86 requires a password to be set or it errors out; arm does not have this problem
             # Failed to get root password hash
             # Failed to import /etc/uefi/certs/76B6A6A0.crt
             # warning: %post(kernel-default-5.14.21-150500.55.83.1.x86_64) scriptlet failed, exit status 255
@@ -3304,9 +3304,9 @@ EOF
             if $need_password_workaround; then
                 echo "root:$(mkpasswd '')" | chroot $os_dir chpasswd -e
             fi
-            # 安装新内核
+            # install the new kernel
             chroot $os_dir zypper install -y --force-resolution $target_kernel
-            # 删除旧内核
+            # remove the old kernel
             if chroot $os_dir rpm -q $origin_kernel; then
                 chroot $os_dir zypper remove -y --force-resolution $origin_kernel
             fi
@@ -3315,24 +3315,24 @@ EOF
             fi
         fi
 
-        # 固件+微码
+        # firmware + microcode
         if fw_pkgs=$(get_ucode_firmware_pkgs) && [ -n "$fw_pkgs" ]; then
             chroot $os_dir zypper install -y $fw_pkgs
         fi
 
-        # 最后才删除 cloud-init
-        # 因为生成 sysconfig 网络配置要用目标系统的 cloud-init
+        # remove cloud-init last,
+        # because generating the sysconfig network configuration needs the target system's cloud-init
         remove_or_disable_cloud_init $os_dir
 
         restore_resolv_conf $os_dir
     fi
 
-    # arch 云镜像
+    # arch cloud image
     if false && [ -f $os_dir/etc/arch-release ]; then
-        # 修复 onlink 网关
+        # Fix the onlink gateway
         add_onlink_script_if_need
 
-        # 同步证书
+        # sync the certificates
         cp_resolv_conf $os_dir
         mount_pseudo_fs $os_dir
         chroot $os_dir pacman-key --init
@@ -3342,15 +3342,15 @@ EOF
 
     basic_init $os_dir
 
-    # 应该在这里是否运行了 basic_init 和创建了网络配置文件
-    # 如果没有，则使用 cloud-init
+    # this should check whether basic_init ran and the network configuration files were created
+    # if not, fall back to cloud-init
 
-    # 查看 cloud-init 最终配置
+    # Show the final cloud-init configuration
     if [ -f "$ci_file" ]; then
         cat -n "$ci_file"
     fi
 
-    # 删除 swap
+    # Remove swap
     swapoff -a
     rm -f $os_dir/swapfile
 }
@@ -3359,7 +3359,7 @@ setup_nocloud() {
     local os_dir=$1
     info "Setup NoCloud"
 
-    # 1. 配置 NoCloud-only datasource
+    # 1. configure a NoCloud-only datasource
     mkdir -p "$os_dir/etc/cloud/cloud.cfg.d"
     cat >"$os_dir/etc/cloud/cloud.cfg.d/99-datasource.cfg" <<'EOF'
 datasource_list: [ NoCloud, None ]
@@ -3369,14 +3369,14 @@ datasource:
     fs_label: null
 EOF
 
-    # 2. 复制 seed 文件（已在 host 上准备好，打包在 initrd 中）
+    # 2. copy the seed files (already prepared on the host and packed into the initrd)
     mkdir -p "$os_dir/var/lib/cloud/seed/nocloud"
     cp /configs/cloud-data/* "$os_dir/var/lib/cloud/seed/nocloud/"
 
-    # 3. 确保 cloud-init 没有被禁用
+    # 3. make sure cloud-init is not disabled
     rm -f "$os_dir/etc/cloud/cloud-init.disabled"
 
-    # 4. 清除 cloud-init 旧状态，确保首次启动重新执行
+    # 4. clear the old cloud-init state so it runs again on first boot
     rm -rf "$os_dir/var/lib/cloud/instance"
     rm -rf "$os_dir/var/lib/cloud/instances"
 }
@@ -3387,24 +3387,24 @@ modify_os_on_disk() {
 
     update_part
 
-    # dd linux 的时候不用修改硬盘内容（nocloud 模式除外）
+    # when dd-ing linux there is no need to modify the disk contents (except in nocloud mode)
     if [ "$distro" = "dd" ] && [ "$only_process" != "nocloud" ] && ! lsblk -f /dev/$xda | grep ntfs; then
         return
     fi
 
     mkdir -p /os
-    # 按分区容量大到小，依次寻找系统分区
-    # lsblk /dev/mmcblk0* 会列出 mmcblk0boot0 mmcblk0boot1
-    # lsblk /dev/mmcblk0  不会列出 mmcblk0boot0 mmcblk0boot1
+    # Look for the system partition from the largest to the smallest
+    # lsblk /dev/mmcblk0* lists mmcblk0boot0 and mmcblk0boot1
+    # lsblk /dev/mmcblk0  does not
     for part in $(lsblk /dev/$xda --filter 'TYPE == "part"' --sort SIZE -no NAME | tac); do
-        # btrfs挂载的是默认子卷，如果没有默认子卷，挂载的是根目录
-        # fedora 云镜像没有默认子卷，且系统在root子卷中
+        # btrfs mounts the default subvolume, or the root directory when there is none
+        # the fedora cloud image has no default subvolume and the system lives in the root subvolume
         if mount -o ro /dev/$part /os; then
             if [ "$only_process" = linux ] || [ "$only_process" = nocloud ]; then
                 if etc_dir=$({ ls -d /os/etc/ || ls -d /os/*/etc/; } 2>/dev/null); then
                     local os_dir
                     os_dir=$(dirname $etc_dir)
-                    # 重新挂载为读写
+                    # remount read-write
                     mount -o remount,rw /os
                     if [ "$only_process" = nocloud ]; then
                         setup_nocloud $os_dir
@@ -3414,34 +3414,34 @@ modify_os_on_disk() {
                     return
                 fi
             elif [ "$only_process" = windows ]; then
-                # find 不是很聪明
+                # find is not very clever
                 # find /mnt/c -iname windows -type d -maxdepth 1
                 # find: /mnt/c/pagefile.sys: Permission denied
                 # find: /mnt/c/swapfile.sys: Permission denied
                 # shellcheck disable=SC1090
-                # find_file_ignore_case 也在这个文件里面
+                # find_file_ignore_case is in this file too
                 . <(wget -O- $confhome/windows-driver-utils.sh)
                 if find_file_ignore_case /os/Windows/System32/ntoskrnl.exe >/dev/null 2>&1; then
-                    # 其他地方会用到
+                    # used elsewhere
                     is_windows() { true; }
-                    # 重新挂载为读写、忽略大小写
+                    # remount read-write, ignoring case
                     umount /os
                     if ! { mount -t ntfs3 -o nocase,rw /dev/$part /os &&
                         mount | grep -w 'on /os type' | grep -wq rw; }; then
-                        # 显示警告
+                        # show a warning
                         warn "Can't normally mount windows partition /dev/$part as rw."
                         dmesg | grep -F "ntfs3($part):" || true
-                        # 有可能 fallback 挂载成 ro, 因此先取消挂载
+                        # the fallback may have mounted it read-only, so unmount first
                         if mount | grep -wq 'on /os type'; then
                             umount /os
                         fi
-                        # 尝试修复并强制挂载
+                        # try to repair it and force the mount
                         apk add ntfs-3g-progs
                         ntfsfix /dev/$part
                         apk del ntfs-3g-progs
                         mount -t ntfs3 -o nocase,rw,force /dev/$part /os
                     fi
-                    # 获取版本号，其他地方会用到
+                    # get the version number, used elsewhere
                     get_windows_version_from_windows_drive /os
                     modify_windows /os
                     return
@@ -3479,9 +3479,9 @@ create_swap() {
     swapfile=$2
 
     if ! grep $swapfile /proc/swaps; then
-        # 用兼容 btrfs 的方式创建 swapfile
+        # create the swapfile in a btrfs-compatible way
         truncate -s 0 $swapfile
-        # 如果分区不支持 chattr +C 会显示错误但返回值是 0
+        # a partition that does not support chattr +C prints an error but still exits 0
         chattr +C $swapfile 2>/dev/null
         fallocate -l ${swapsize}M $swapfile
         chmod 0600 $swapfile
@@ -3494,34 +3494,34 @@ del_user_password_and_lock() {
     local os_dir=$1
     local username=$2
 
-    # 锁定用户后 ssh 能否登录
-    # alpine ×
-    # 其它系统 √
+    # can a locked user still log in over ssh?
+    # alpine         no
+    # other systems  yes
 
-    # root 空密码，不锁定 root，其它用户用 su - root 能否切换到 root
-    # alpine ×
-    # 其它系统 √
+    # with an empty root password and root not locked, can another user switch with su - root?
+    # alpine         no
+    # other systems  yes
 
-    # centos 7 不支持一行命令同时 -d -l
+    # centos 7 does not accept -d and -l in the same command
     # passwd: Only one of -l, -u, -d, -S may be specified.
 
-    # 删除密码
+    # Remove the password
     chroot "$os_dir" passwd -d "$username"
 
-    # 锁定用户
+    # Lock the user
     if ! [ -e "$os_dir/etc/alpine-release" ]; then
         chroot "$os_dir" passwd -l "$username"
     fi
 
-    # alpine 锁定用户无法登录 ssh
-    # 因为 alpine 默认不开启 pam
-    # 其他系统默认开启
+    # on alpine a locked user cannot log in over ssh,
+    # because alpine does not enable pam by default
+    # other systems do
 
-    # 不开启 pam 的话，锁定用户无法登录 ssh
-    # 开启 pam 后可以
+    # without pam, a locked user cannot log in over ssh
+    # with pam enabled, they can
 
-    # alpine 是通过安装 openssh-server-pam 开启 pam
-    # 不需要设置 UsePAM yes 也无法识别 UsePAM yes
+    # alpine enables pam by installing openssh-server-pam
+    # UsePAM yes need not be set, and would not be recognized anyway
     # localhost:~# sshd -G | grep -i pam
     # /etc/ssh/sshd_config line 88: Unsupported option UsePAM
 }
@@ -3537,20 +3537,20 @@ set_ssh_keys_and_del_password() {
         local user_home="/home/$username"
     fi
 
-    # 添加公钥
+    # Add the public key
     if true; then
         (
             umask 077
             mkdir -p "$os_dir/$user_home/.ssh"
             cat /configs/ssh_keys >"$os_dir/$user_home/.ssh/authorized_keys"
         )
-        # 注意要用 chroot，否则 uid/gid 是 alpine live os 下的 uid/gid
+        # chroot is required, otherwise the uid/gid are those of the alpine live os
         chroot "$os_dir" chown "$username:$username" "$user_home"
         chroot "$os_dir" chown "$username:$username" "$user_home/.ssh"
         chroot "$os_dir" chown "$username:$username" "$user_home/.ssh/authorized_keys"
     else
         (
-            # 如果日后添加 bsd 无法 chroot 时可以这样
+            # if a bsd that cannot be chrooted is ever added, this could be used
             umask 077
             read -r owner group < \
                 <(awk -F: -v user="$username" '$1==user {print $3,$4}' "$os_dir/etc/passwd")
@@ -3563,13 +3563,13 @@ set_ssh_keys_and_del_password() {
         )
     fi
 
-    # 删除密码/锁定用户
+    # Remove the password / lock the user
     del_user_password_and_lock "$os_dir" "$username"
 
-    # debian 云镜像 /etc/shadow 的 root 条目为
+    # in the debian cloud image the root entry of /etc/shadow is
     # root:!unprovisioned:20591:0:99999:7:::
-    # 首次开机会停在设置 root 密码界面，且阻塞 ssh 服务
-    # 因此这里手动清空 root 密码并锁定
+    # the first boot then stops at the set-root-password prompt and blocks the ssh service,
+    # so clear the root password and lock it here
     if ! [ "$username" = root ] && is_have_cmd_on_disk "$os_dir" systemd-firstboot; then
         del_user_password_and_lock "$os_dir" root
     fi
@@ -3580,7 +3580,7 @@ _is_ssh_kv_effective() {
     local key=$2
     local value=$3
 
-    # 解决 ubuntu 22.04 报错
+    # Work around a ubuntu 22.04 error
     # Missing privilege separation directory: /run/sshd
     if [ -d "$os_dir/run/sshd" ]; then
         we_create_run_sshd_dir=false

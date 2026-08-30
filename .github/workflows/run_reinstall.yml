@@ -27,7 +27,6 @@ jobs:
           ${{ matrix.command }} almalinux
           # ${{ matrix.command }} rocky
           # ${{ matrix.command }} fedora
-          # ${{ matrix.command }} oracle
           ${{ matrix.command }} ubuntu
           ${{ matrix.command }} debian
           ${{ matrix.command }} debian --ci
@@ -35,7 +34,6 @@ jobs:
           # ${{ matrix.command }} alpine
           # ${{ matrix.command }} opensuse
           # ${{ matrix.command }} arch
-          # ${{ matrix.command }} gentoo
 
           ${{ matrix.command_no_username_option }} netboot.xyz
           ${{ matrix.command }} dd --img=https://cloud.debian.org/images/cloud/sid/daily/latest/debian-sid-nocloud-amd64-daily.tar.xz

@@ -76,25 +76,16 @@ fi
 
 usage_and_exit() {
     cat <<EOF
-Usage: $reinstall_____ anolis      7|8|23
-                       opencloudos 8|9|23
-                       rocky       8|9|10
-                       oracle      8|9|10
+Usage: $reinstall_____ rocky       8|9|10
                        almalinux   8|9|10
                        centos      9|10
-                       fnos        1
-                       fygoos      1
-                       nixos       26.05
                        fedora      43|44
                        debian      9|10|11|12|13
                        opensuse    16.0|tumbleweed
-                       openeuler   20.03|22.03|24.03
                        alpine      3.21|3.22|3.23|3.24
                        ubuntu      18.04|20.04|22.04|24.04|26.04 [--minimal]
                        kali
                        arch
-                       gentoo
-                       aosc
                        redhat      --img="http://access.cdn.redhat.com/xxx.qcow2"
                        dd          --img="http://xxx.com/yyy.zzz" (raw image stores in raw/vhd/tar/gz/xz/zst)
                        windows     --image-name="windows xxx yyy" --lang=xx-yy
@@ -1618,49 +1609,6 @@ Continue?
         fi
     }
 
-    setos_nixos() {
-        if is_in_china; then
-            mirror=https://mirror.nju.edu.cn/nix-channels
-        else
-            mirror=https://nixos.org/channels
-        fi
-
-        if is_use_cloud_image; then
-            :
-        else
-            # 传统安装
-            # 该服务器文件缓存 miss 时会响应 206 + Location 头
-            # 但 curl 这种情况不会重定向，所以添加 text 类型让它不要报错
-            test_url $mirror/nixos-$releasever/store-paths.xz 'xz text'
-            set_osvar mirror "$mirror"
-        fi
-    }
-
-    setos_gentoo() {
-        if is_in_china; then
-            mirror=https://mirror.nju.edu.cn/gentoo
-        else
-            mirror=https://distfiles.gentoo.org # cdn77
-        fi
-
-        dir=releases/$basearch_alt/autobuilds
-
-        if is_use_cloud_image; then
-            # 使用 systemd 且没有 cloud-init
-            prefix=di-$basearch_alt-console
-            filename=$(curl -L $mirror/$dir/latest-$prefix.txt | grep '.qcow2' | awk '{print $1}' | grep .)
-            file=$mirror/$dir/$filename
-            test_url "$file" 'qemu'
-            set_osvar img "$file"
-        else
-            prefix=stage3-$basearch_alt-systemd
-            filename=$(curl -L $mirror/$dir/latest-$prefix.txt | grep '.tar.xz' | awk '{print $1}' | grep .)
-            file=$mirror/$dir/$filename
-            test_url "$file" 'tar.xz'
-            set_osvar img "$file"
-        fi
-    }
-
     setos_opensuse() {
         # https://download.opensuse.org/
         # curl 会跳转到最近的镜像源，但可能会被镜像源 block
@@ -1833,75 +1781,6 @@ Continue with DD?
         set_osvar img_type_warp "$img_type_warp"
     }
 
-    setos_fnos() {
-        # 系统盘大小
-        min=8
-        default=8
-        echo "请输入系统分区大小，最小 $min GB，但可能无法更新系统。"
-        echo "Please input System Partition Size. Minimal is $min GB but may not be able to do system updates."
-        while true; do
-            IFS= read -r -p "Size in GB [$default]: " input
-            input=${input:-$default}
-            if ! { is_digit "$input" && [ "$input" -ge "$min" ]; }; then
-                error "Invalid Size. Please Try again."
-            else
-                set_osvar fnos_part_size "${input}G"
-                break
-            fi
-        done
-
-        if [ -z "$iso" ]; then
-            local download_page sign_page
-            if [ "$FLYGOOS" = 1 ]; then
-                download_page=https://fygonas.com/download
-                # sign_page=https://fygonas.com/asset/download-sign
-            else
-                download_page=https://fnnas.com/download$([ "$basearch" = aarch64 ] && echo -arm || true)
-                sign_page=https://fnnas.com/asset/download-sign
-            fi
-
-            # fnos_Mainland-PE_x86_1.2.0203_2149.iso
-            # fnos_Mainland-PE_arm_1.1.31_armsr_1366.iso
-            # fygoos_PE_x86_1.2.0203_2150.iso
-            # fygoos_PE_arm_1.2.0007_armsr_1837.iso
-
-            # 对于同一行有多个成功匹配，grep -m1 无效
-            iso=$(curl -L "$download_page" | grep -o 'https://[^"]*\.iso' |
-                grep "$([ "$basearch" = aarch64 ] && echo _armsr_ || echo _x86_)" |
-                head -1 | grep .)
-
-            if [ -n "$sign_page" ]; then
-                # curl 7.82.0+
-                # curl -L --json '{"url":"'$iso'"}' https://fnnas.com/asset/download-sign
-
-                iso=$(curl -L \
-                    -d '{"url":"'$iso'"}' \
-                    -H 'Content-Type: application/json' \
-                    "$sign_page" |
-                    grep -o 'https://[^"]*')
-            fi
-        fi
-
-        test_url "$iso" iso
-        set_osvar iso "$iso"
-    }
-
-    setos_aosc() {
-        if is_in_china; then
-            mirror=https://mirror.nju.edu.cn/anthon/aosc-os
-        else
-            # 服务器在香港
-            mirror=https://releases.aosc.io
-        fi
-
-        dir=os-$basearch_alt/base
-        file=$(curl -L $mirror/$dir/ | grep -oP 'aosc-os_base_.*?\.tar.xz' |
-            sort -uV | tail -1 | grep .)
-        img=$mirror/$dir/$file
-        test_url $img 'tar.xz'
-        set_osvar img "$img"
-    }
-
     setos_centos_almalinux_rocky_fedora() {
         # el 10 需要 x86-64-v3，除了 almalinux
         if [ "$basearch" = x86_64 ] &&
@@ -1998,31 +1877,6 @@ Continue with DD?
         fi
     }
 
-    setos_oracle() {
-        # el 10 需要 x86-64-v3
-        if [ "$basearch" = x86_64 ] && [ "$releasever" -ge 10 ]; then
-            assert_cpu_supports_x86_64_v3
-        fi
-
-        if is_use_cloud_image; then
-            # ci
-            install_pkg jq
-            mirror=https://yum.oracle.com
-
-            [ "$basearch" = aarch64 ] &&
-                template_prefix=ol${releasever}_${basearch}-cloud ||
-                template_prefix=ol${releasever}
-            curl -Lo $tmp/oracle.json $mirror/templates/OracleLinux/$template_prefix-template.json
-            dir=$(jq -r .base_url $tmp/oracle.json)
-            file=$(jq -r .kvm.image $tmp/oracle.json)
-            ci_image=$mirror$dir/$file
-
-            set_osvar img "$ci_image"
-        else
-            :
-        fi
-    }
-
     setos_redhat() {
         if is_use_cloud_image; then
             # el 10 需要 x86-64-v3
@@ -2030,63 +1884,6 @@ Continue with DD?
                 assert_cpu_supports_x86_64_v3
             fi
             set_osvar img "$img"
-        else
-            :
-        fi
-    }
-
-    setos_opencloudos() {
-        # https://mirrors.opencloudos.tech 不支持 ipv6
-        # https://mirrors.cloud.tencent.com 没有 stream
-        if [ "$releasever" -ge 23 ]; then
-            mirror=https://mirrors.opencloudos.tech/opencloudos-stream/releases
-        else
-            mirror=https://mirrors.cloud.tencent.com/opencloudos
-        fi
-
-        if is_use_cloud_image; then
-            # ci
-            if [ "$releasever" -eq 9 ]; then
-                dir=$releasever/images/qcow2/$basearch
-            else
-                dir=$releasever/images/$basearch
-            fi
-
-            file=$(curl -L $mirror/$dir/ | grep -oP 'OpenCloudOS.*?\.qcow2' |
-                sort -uV | tail -1 | grep .)
-            set_osvar img "$mirror/$dir/$file"
-        else
-            :
-        fi
-    }
-
-    setos_anolis() {
-        mirror=https://mirrors.openanolis.cn/anolis
-        if is_use_cloud_image; then
-            # ci
-            dir=$releasever/isos/GA/$basearch
-            [ "$releasever" -ge 23 ] &&
-                filename='AnolisOS.*?\.qcow2' ||
-                filename='AnolisOS.*?-ANCK\.qcow2'
-            file=$(curl -L $mirror/$dir/ | grep -oP "$filename" |
-                sort -uV | tail -1 | grep .)
-            set_osvar img "$mirror/$dir/$file"
-        else
-            :
-        fi
-    }
-
-    setos_openeuler() {
-        if is_in_china; then
-            mirror=https://repo.openeuler.openatom.cn
-        else
-            mirror=https://repo.openeuler.org
-        fi
-        if is_use_cloud_image; then
-            # ci
-            name=$(curl -L "$mirror/" | grep -oE "openEuler-$releasever(-LTS)?(-SP[0-9])?" |
-                sort -uV | tail -1 | grep .)
-            set_osvar img "$mirror/$name/virtual_machine_img/$basearch/$name-$basearch.qcow2.xz"
         else
             :
         fi
@@ -2118,7 +1915,7 @@ is_distro_like_redhat() {
     else
         _distro=$distro
     fi
-    [ "$_distro" = redhat ] || [ "$_distro" = centos ] || [ "$_distro" = almalinux ] || [ "$_distro" = rocky ] || [ "$_distro" = fedora ] || [ "$_distro" = oracle ]
+    [ "$_distro" = redhat ] || [ "$_distro" = centos ] || [ "$_distro" = almalinux ] || [ "$_distro" = rocky ] || [ "$_distro" = fedora ]
 }
 
 is_distro_like_debian() {
@@ -2144,25 +1941,16 @@ verify_os_name() {
     # 不要删除 centos 7
     for os in \
         'centos      7|9|10' \
-        'anolis      7|8|23' \
-        'opencloudos 8|9|23' \
         'almalinux   8|9|10' \
         'rocky       8|9|10' \
-        'oracle      8|9|10' \
-        'fnos        1' \
-        'fygoos      1' \
         'fedora      43|44' \
-        'nixos       26.05' \
         'debian      9|10|11|12|13' \
         'opensuse    16.0|tumbleweed' \
         'alpine      3.21|3.22|3.23|3.24' \
-        'openeuler   20.03|22.03|24.03' \
         'ubuntu      18.04|20.04|22.04|24.04|26.04' \
         'redhat' \
         'kali' \
         'arch' \
-        'gentoo' \
-        'aosc' \
         'windows' \
         'dd' \
         'netboot.xyz' \
@@ -2172,11 +1960,6 @@ verify_os_name() {
         finalos=$(echo "$@" | to_lower | sed -n -E "s,^($ds)[ :-]?(|$vers_)$,\1 \2,p")
         if [ -n "$finalos" ]; then
             read -r distro releasever <<<"$finalos"
-            # fygoos to fnos
-            if [ "$distro" = fygoos ]; then
-                distro=fnos
-                FLYGOOS=1
-            fi
             # 默认版本号
             if [ -z "$releasever" ] && [ -n "$vers" ]; then
                 releasever=$(awk -F '|' '{print $NF}' <<<"|$vers")
@@ -2444,9 +2227,9 @@ check_ram() {
         case "$distro" in
         netboot.xyz) echo 0 ;;
         alpine | debian | kali | dd) echo 256 ;;
-        arch | gentoo | aosc | nixos | windows) echo 512 ;;
-        redhat | centos | almalinux | rocky | fedora | oracle | ubuntu | anolis | opencloudos | openeuler) echo 1024 ;;
-        opensuse | fnos) echo -1 ;; # 没有安装模式
+        arch | windows) echo 512 ;;
+        redhat | centos | almalinux | rocky | fedora | ubuntu) echo 1024 ;;
+        opensuse) echo -1 ;; # no installer mode
         esac
     )
 
@@ -2460,8 +2243,8 @@ check_ram() {
 
     has_cloud_image=$(
         case "$distro" in
-        redhat | centos | almalinux | rocky | oracle | fedora | debian | ubuntu | opensuse | anolis | openeuler) echo true ;;
-        netboot.xyz | alpine | dd | arch | gentoo | nixos | kali | windows) echo false ;;
+        redhat | centos | almalinux | rocky | fedora | debian | ubuntu | opensuse) echo true ;;
+        netboot.xyz | alpine | dd | arch | kali | windows) echo false ;;
         esac
     )
 
@@ -4901,7 +4684,6 @@ EOF
 
         # 保存 key
         # 不用处理注释，可以支持写入 authorized_keys
-        # 安装 nixos 时再处理注释/空行，转成数组，再添加到 nix 配置文件中
         if [ -n "$ssh_keys" ]; then
             ssh_keys+=$'\n'
         fi
@@ -5030,13 +4812,13 @@ fi
 # 强制忽略/强制添加 --ci 参数
 # debian 不强制忽略 ci 留作测试
 case "$distro" in
-dd | windows | netboot.xyz | kali | alpine | arch | gentoo | aosc | nixos | fnos)
+dd | windows | netboot.xyz | kali | alpine | arch)
     if is_use_cloud_image; then
         echo "ignored --ci"
         unset cloud_image
     fi
     ;;
-oracle | opensuse | anolis | opencloudos | openeuler)
+opensuse)
     cloud_image=1
     ;;
 redhat | centos | almalinux | rocky | fedora | ubuntu)
@@ -5312,25 +5094,6 @@ elif [ "$distro" = alpine ] && [ "$hold" = 1 ]; then
         echo "Password: $password"
     fi
     echo "SSH Port: $ssh_port"
-
-elif [ "$distro" = fnos ]; then
-    info "While Install (View Logs)"
-    echo "Username: $username"
-    if [ -n "$ssh_keys" ]; then
-        echo "Public Key: $ssh_keys"
-    else
-        echo "Password: $password"
-    fi
-    echo "SSH Port: $ssh_port"
-    echo "WEB Port: $web_port"
-
-    info "After Install"
-
-    echo "安装后不会开启 SSH 服务。"
-    echo "你需要尽快到 http://IP:5666 配置账号密码。"
-    echo
-    echo "SSH Service is disabled after installation."
-    echo "You need to config the username and password on http://IP:5666 as soon as possible."
 
 elif [ "$distro" = windows ]; then
     info "While Install (View Logs)"

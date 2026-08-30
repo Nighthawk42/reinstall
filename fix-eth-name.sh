@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 # shellcheck shell=dash
 # shellcheck disable=SC3001,SC3010
-# alpine 使用 busybox ash
+# alpine uses busybox ash
 
 set -eE
 
-# 本脚本在首次进入新系统后运行
-# 将 trans 阶段生成的网络配置中的网卡名(eth0) 改为正确的网卡名，也适用于以下情况
-# 1. alpine 要运行此脚本，因为安装后的内核可能有 netboot 没有的驱动
-# 2. dmit debian 普通内核(安装时)和云内核网卡名不一致
+# This script runs on the first boot into the new system
+# It rewrites the NIC name (eth0) in the config generated during the trans stage to the real name. Also covers:
+# 1. alpine needs it, because the installed kernel may have drivers the netboot kernel lacks
+# 2. on dmit debian the NIC name differs between the normal (install-time) kernel and the cloud kernel
 #    https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=928923
 
-# openeuler 需等待 udev 将网卡名从 eth0 改为 enp3s0
-# openeuler 本脚本运行一秒后才有 enp3s0
-# 用 systemd-analyze plot >a.svg 发现 sys-subsystem-net-devices-enp3s0.device 也是出现在 NetworkManager 之后
+# on openeuler we must wait for udev to rename the NIC from eth0 to enp3s0
+# enp3s0 only shows up a second after this script starts
+# systemd-analyze plot >a.svg shows sys-subsystem-net-devices-enp3s0.device also appears after NetworkManager
 
-# 有些时候网卡名还会来回修改几次
-# 因此需要等待网卡名稳定
+# sometimes the NIC name changes back and forth a few times
+# so wait until it settles
 
-# 不知道有没有用
+# not sure whether this helps
 if false; then
     if command -v udevadm >/dev/null; then
         # udevadm trigger
@@ -29,9 +29,9 @@ if false; then
     sleep 1
 fi
 
-has_eth=false  # 是否检查到网卡
-check_count=0  # 总检查次数
-stable_count=0 # 网卡名稳定的次数
+has_eth=false  # whether a NIC was found
+check_count=0  # total checks performed
+stable_count=0 # consecutive checks with an unchanged name
 old_state=
 while true; do
     check_count=$((check_count + 1))
@@ -49,12 +49,12 @@ while true; do
 
     old_state=$new_state
 
-    # 稳定 10 秒后退出循环
+    # leave the loop after 10 stable seconds
     if $has_eth && [ "$stable_count" -ge 10 ]; then
         break
     fi
 
-    # 60 秒都没发现网卡则退出脚本
+    # give up if no NIC appears within 60 seconds
     if ! $has_eth && [ "$check_count" -ge 60 ]; then
         exit 1
     fi
@@ -77,11 +77,11 @@ get_ethx_by_mac() {
     if true; then
         if [ "$flag" = master ]; then
             # master
-            # 过滤 azure vf (带 master ethx)
+            # filter out azure VFs (they have a master ethx)
             ip -o link | grep -i "$mac" | grep -v master | awk '{print $2}' | cut -d: -f1 | grep .
         else
             # slave
-            # 带 master ethx
+            # has a master ethx
             ip -o link | grep -i "$mac" | grep -w master | awk '{print $2}' | cut -d: -f1 | grep .
         fi
     else
@@ -104,22 +104,22 @@ get_ethx_by_mac() {
 
 fix_rh_sysconfig() {
     for file in /etc/sysconfig/network-scripts/ifcfg-eth*; do
-        # 没有 ifcfg-eth* 也会执行一次，因此要判断文件是否存在
+        # this runs once even when there is no ifcfg-eth*, so check the file exists
         [ -f "$file" ] || continue
         mac=$(grep ^HWADDR= "$file" | cut -d= -f2 | grep .) || continue
         ethx=$(get_ethx_by_mac "$mac") || continue
 
         proper_file=/etc/sysconfig/network-scripts/ifcfg-$ethx
         if [ "$file" != "$proper_file" ]; then
-            # 更改文件内容
+            # rewrite the file contents
             sed -i "s/^DEVICE=.*/DEVICE=$ethx/" "$file"
 
-            # 不要直接更改文件名，因为可能覆盖已有文件
+            # do not rename in place: it could overwrite an existing file
             mv "$file" "$proper_file.tmp"
         fi
     done
 
-    # 更改文件名
+    # rename the file
     for tmp_file in /etc/sysconfig/network-scripts/ifcfg-e*.tmp; do
         if [ -f "$tmp_file" ]; then
             mv "$tmp_file" "${tmp_file%.tmp}"
@@ -131,17 +131,17 @@ fix_suse_sysconfig() {
     for file in /etc/sysconfig/network/ifcfg-eth*; do
         [ -f "$file" ] || continue
 
-        # 可能两边有引号
+        # may be wrapped in quotes
         mac=$(grep ^LLADDR= "$file" | cut -d= -f2 | sed "s/'//g" | grep .) || continue
         ethx=$(get_ethx_by_mac "$mac") || continue
 
         old_ethx=${file##*-}
         if ! [ "$old_ethx" = "$ethx" ]; then
-            # 不要直接更改文件名，因为可能覆盖已有文件
+            # do not rename in place: it could overwrite an existing file
             for type in ifcfg ifroute; do
                 old_file=/etc/sysconfig/network/$type-$old_ethx
                 new_file=/etc/sysconfig/network/$type-$ethx.tmp
-                # 防止没有 ifroute-eth* 导致中断脚本
+                # do not abort the script when there is no ifroute-eth*
                 if [ -f "$old_file" ]; then
                     mv "$old_file" "$new_file"
                 fi
@@ -149,7 +149,7 @@ fix_suse_sysconfig() {
         fi
     done
 
-    # 上面的循环结束后，再将 tmp 改成正式文件
+    # once the loop above finishes, promote the tmp files to the real ones
     for tmp_file in \
         /etc/sysconfig/network/ifcfg-e*.tmp \
         /etc/sysconfig/network/ifroute-e*.tmp; do
@@ -167,17 +167,17 @@ fix_network_manager() {
 
         proper_file=/etc/NetworkManager/system-connections/$ethx.nmconnection
 
-        # 更改文件内容
+        # rewrite the file contents
         sed -i "s/^id=.*/id=$ethx/" "$file"
 
-        # 更改文件名
+        # rename the file
         mv "$file" "$proper_file"
 
-        # NM 不会自动忽略 Azure 的 slave 网卡，需手动设置
-        # azure 文档中的方法不够通用，只适合 azure
+        # NetworkManager does not ignore Azure slave NICs by itself; set it manually
+        # the method in the azure docs is azure-specific and not general enough
         # https://learn.microsoft.com/zh-cn/azure/virtual-network/accelerated-networking-overview
 
-        # 我们采用红帽的方法
+        # so use Red Hat's approach instead
         # https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/8/html/configuring_and_managing_networking/configuring-networkmanager-to-ignore-certain-devices_configuring-and-managing-networking
         if slave_ethx=$(get_ethx_by_mac "$mac" slave); then
             cat >"/etc/NetworkManager/conf.d/99-$slave_ethx-unmanaged.conf" <<EOF
@@ -187,17 +187,17 @@ managed=0
 EOF
         fi
 
-        # 也可以设置 unmanaged-devices, 但是官方文档不推荐
+        # unmanaged-devices would also work, but the official docs advise against it
         # https://networkmanager.pages.freedesktop.org/NetworkManager/NetworkManager/NetworkManager.conf.html#:~:text=may%20be%20a-,better%20choice,-.
     done
 }
 
-# debian 9 IPV6 onlink 路由需要 post-up
+# an IPv6 onlink route on debian 9 needs post-up
 
 # auto lo
 # iface lo inet loopback
 
-# # mac 11:22:33:44:55:66    # 用此行匹配网卡
+# # mac 11:22:33:44:55:66    # this line is used to match the NIC
 # auto eth0
 # iface eth0 inet static
 #     address 1.1.1.1/25
@@ -235,7 +235,7 @@ fix_ifupdown() {
                 fi
             elif [[ "$line" = *" dev e"* ]]; then
                 if [ -n "$ethx" ]; then
-                    # awk 会去除前面的空格
+                    # awk strips the leading spaces
                     line=$(echo "$line" | sed -E "s/[^ ]*$/$ethx/")
                 fi
             fi
@@ -257,29 +257,29 @@ fix_netplan() {
     if [ -f "$file" ]; then
         while IFS= read -r line; do
             if echo "$line" | grep -Eq '^[[:space:]]+macaddress:'; then
-                # 得到正确的网卡名
+                # obtain the correct NIC name
                 mac=$(echo "$line" | awk '{print $NF}' | sed 's/"//g')
                 ethx=$(get_ethx_by_mac "$mac") || true
             elif echo "$line" | grep -Eq '^[[:space:]]+eth[0-9]+:'; then
-                # 改成正确的网卡名
+                # replace it with the correct NIC name
                 if [ -n "$ethx" ]; then
                     line=$(echo "$line" | sed -E "s/[^[:space:]]+/$ethx:/")
                 fi
             fi
             echo "$line" >>"$tmp_file"
 
-            # 删除 set-name 不过这一步在 trans 已完成
-            # 因为 netplan-generator 会在 systemd generator 阶段就根据 netplan 配置重命名网卡
-            # systemd generator 阶段比本脚本和 systemd-networkd 更早运行
+            # remove set-name, although the trans stage already did this
+            # because netplan-generator renames the NIC during the systemd generator stage,
+            # which runs earlier than both this script and systemd-networkd
 
-            # 倒序
+            # reverse order
         done < <(grep -Ev "^[[:space:]]+set-name:" "$file" | tac)
 
-        # 再倒序回来
+        # reverse it back
         tac "$tmp_file" >"$file"
         rm -f "$tmp_file"
 
-        # 通过 systemd netplan generator 生成 /run/systemd/network/10-netplan-enp3s0.network
+        # the systemd netplan generator produces /run/systemd/network/10-netplan-enp3s0.network
         systemctl daemon-reload
     fi
 }
@@ -292,10 +292,10 @@ fix_systemd_networkd() {
 
         proper_file=/etc/systemd/network/10-$ethx.network
 
-        # 更改文件内容
+        # rewrite the file contents
         sed -Ei "s/^Name=eth[0-9]+/Name=$ethx/" "$file"
 
-        # 更改文件名
+        # rename the file
         mv "$file" "$proper_file"
     done
 }

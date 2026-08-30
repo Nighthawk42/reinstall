@@ -9,7 +9,7 @@ set -eE
 confhome=https://raw.githubusercontent.com/Nighthawk42/reinstall/main
 
 # Used to check that reinstall.sh and trans.sh are compatible
-SCRIPT_VERSION=4BACD833-A585-23BA-6CBB-9AA4E08E0004
+SCRIPT_VERSION=AC05D533-28A1-4732-86D5-3863C5889A8A
 
 # Windows programs we rely on; strip \r from their output at run time
 WINDOWS_EXES='cmd powershell wmic reg diskpart netsh bcdedit mountvol'
@@ -155,6 +155,16 @@ show_dd_password_tips() {
 This password is only used for SSH access to view logs during the installation.
 Password of the image will NOT modify.
 "
+}
+
+# The ssh key and the password are independent: print whichever the user set.
+show_credentials() {
+    if [ -n "$ssh_keys" ]; then
+        echo "Public Key: $ssh_keys"
+    fi
+    if [ -n "$password" ]; then
+        echo "Password: $password"
+    fi
 }
 
 show_url_in_args() {
@@ -1885,10 +1895,9 @@ verify_os_args() {
         ;;
     esac
 
-    # a key and a password cannot both be used
-    if [ -n "$password" ] && [ -n "$ssh_keys" ]; then
-        error_and_exit "Cannot set both password and ssh key."
-    fi
+    # --password and --ssh-key may be combined on purpose: the key goes into
+    # ~/.ssh/authorized_keys and the password into /etc/shadow, so a key that
+    # fails to land still leaves password login as a way back in.
 }
 
 get_cmd_path() {
@@ -3887,7 +3896,10 @@ This script is outdated, please download reinstall.sh again."
     mkdir -p $initrd_dir/configs
     if [ -n "$ssh_keys" ]; then
         cat <<<"$ssh_keys" >$initrd_dir/configs/ssh_keys
-    else
+    fi
+    # Save the password even when a key was given: trans.sh keeps password login
+    # enabled so that a key which fails to land cannot lock the user out.
+    if [ -n "$password" ]; then
         save_password $initrd_dir/configs
     fi
     if [ -n "$frpc_config" ]; then
@@ -4961,17 +4973,13 @@ if [ "$distro" = netboot.xyz ]; then
 elif [ "$distro" = alpine ] && [ "$hold" = 1 ]; then
     info "Alpine Live OS"
     echo "Username: $username"
-    if [ -n "$ssh_keys" ]; then
-        echo "Public Key: $ssh_keys"
-    else
-        echo "Password: $password"
-    fi
+    show_credentials
     echo "SSH Port: $ssh_port"
 
 elif [ "$distro" = windows ]; then
     info "While Install (View Logs)"
     echo "Username: $username"
-    echo "Password: $password"
+    show_credentials
     echo "SSH Port: $ssh_port"
     echo "WEB Port: $web_port"
 
@@ -4981,17 +4989,13 @@ elif [ "$distro" = windows ]; then
     else
         echo "Username: $username"
     fi
-    echo "Password: $password"
+    show_credentials
     echo "RDP Port: $rdp_port"
 
 elif [ "$distro" = dd ]; then
     info "While Install (View Logs)"
     echo "Username: $username"
-    if [ -n "$ssh_keys" ]; then
-        echo "Public Key: $ssh_keys"
-    else
-        echo "Password: $password"
-    fi
+    show_credentials
     echo "SSH Port: $ssh_port"
     echo "WEB Port: $web_port"
 
@@ -5010,21 +5014,13 @@ else
     # a normal linux
     info "While Install (View Logs)"
     echo "Username: $username"
-    if [ -n "$ssh_keys" ]; then
-        echo "Public Key: $ssh_keys"
-    else
-        echo "Password: $password"
-    fi
+    show_credentials
     echo "SSH Port: $ssh_port"
     echo "WEB Port: $web_port"
 
     info "After Install"
     echo "Username: $username"
-    if [ -n "$ssh_keys" ]; then
-        echo "Public Key: $ssh_keys"
-    else
-        echo "Password: $password"
-    fi
+    show_credentials
     echo "SSH Port: $ssh_port"
 fi
 

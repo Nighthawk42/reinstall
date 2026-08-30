@@ -10,7 +10,7 @@ set -eE
 
 # Used to check that reinstall.sh and trans.sh are compatible
 # shellcheck disable=SC2034
-SCRIPT_VERSION=4BACD833-A585-23BA-6CBB-9AA4E08E0004
+SCRIPT_VERSION=AC05D533-28A1-4732-86D5-3863C5889A8A
 
 TRUE=0
 FALSE=1
@@ -957,6 +957,12 @@ is_need_set_ssh_keys() {
     [ -s /configs/ssh_keys ]
 }
 
+# reinstall.sh only writes the credential files the user asked for, so the two
+# may both be present. A password that is present is never removed by the key.
+is_need_set_password() {
+    [ -s /configs/password-linux-sha512 ] || [ -s /configs/password-plaintext ]
+}
+
 is_need_change_ssh_port() {
     [ -n "$ssh_port" ] && ! [ "$ssh_port" = 22 ]
 }
@@ -1534,9 +1540,16 @@ install_alpine() {
     printf '\n' | chroot /os setup-ntp || true
 
     # Set the public key
+    # The password and the ssh config come from the live OS, which setup-disk
+    # copies over, so only the key needs writing here.
     add_user_if_need /os
     if is_need_set_ssh_keys; then
-        set_ssh_keys_and_del_password /os
+        set_ssh_keys /os
+        # keep the password when the user set one, so that password login still
+        # works if the key failed to land
+        if ! is_need_set_password; then
+            del_user_password_and_lock /os "$username"
+        fi
     fi
 
     # alpine 3.24+
@@ -1743,13 +1756,7 @@ basic_init() {
 
     # public key / password
     add_user_if_need "$os_dir"
-    if is_need_set_ssh_keys; then
-        set_ssh_keys_and_del_password $os_dir
-        change_ssh_conf_for_key_login $os_dir
-    else
-        change_user_password $os_dir
-        change_ssh_conf_for_password_login $os_dir
-    fi
+    set_credentials "$os_dir"
 
     # Download fix-eth-name.service
     # needed even with net.ifnames=0,
@@ -3526,7 +3533,8 @@ del_user_password_and_lock() {
     # /etc/ssh/sshd_config line 88: Unsupported option UsePAM
 }
 
-set_ssh_keys_and_del_password() {
+# Write the public key into the user's authorized_keys.
+set_ssh_keys() {
     local os_dir=$1
 
     info 'set ssh keys'
@@ -3562,17 +3570,41 @@ set_ssh_keys_and_del_password() {
                 "$os_dir/$user_home/.ssh/authorized_keys"
         )
     fi
+}
 
-    # Remove the password / lock the user
-    del_user_password_and_lock "$os_dir" "$username"
+# In the debian cloud image the root entry of /etc/shadow is
+# root:!unprovisioned:20591:0:99999:7:::
+# the first boot then stops at the set-root-password prompt and blocks the ssh
+# service, so when the user asked for a different account, clear the root
+# password and lock root, whichever credentials that account was given.
+lock_root_on_cloud_image() {
+    local os_dir=$1
 
-    # in the debian cloud image the root entry of /etc/shadow is
-    # root:!unprovisioned:20591:0:99999:7:::
-    # the first boot then stops at the set-root-password prompt and blocks the ssh service,
-    # so clear the root password and lock it here
     if ! [ "$username" = root ] && is_have_cmd_on_disk "$os_dir" systemd-firstboot; then
         del_user_password_and_lock "$os_dir" root
     fi
+}
+
+# Install the credentials the user asked for.
+# The key and the password are independent. When both are given, password login
+# stays enabled, so a key that failed to land still leaves a way back in.
+set_credentials() {
+    local os_dir=$1
+
+    if is_need_set_ssh_keys; then
+        set_ssh_keys "$os_dir"
+    fi
+
+    if is_need_set_password; then
+        change_user_password "$os_dir"
+        change_ssh_conf_for_password_login "$os_dir"
+    elif is_need_set_ssh_keys; then
+        # the key is the only way in, so drop password logins entirely
+        del_user_password_and_lock "$os_dir" "$username"
+        change_ssh_conf_for_key_login "$os_dir"
+    fi
+
+    lock_root_on_cloud_image "$os_dir"
 }
 
 _is_ssh_kv_effective() {
@@ -7403,15 +7435,15 @@ if is_need_change_ssh_port; then
     change_ssh_port / $ssh_port
 fi
 
-# Set the password, add the startup entry and enable the ssh service
+# Set the password / public key, add the startup entry and enable the ssh service
 add_user_if_need /
-if is_need_set_ssh_keys; then
-    set_ssh_keys_and_del_password /
-    change_ssh_conf_for_key_login /
+set_credentials /
+# setup-sshd asks whether existing host keys are replaced. Regenerate them
+# whenever password login is possible, so a password is never offered to a
+# client that was shown a live-OS host key.
+if is_need_set_ssh_keys && ! is_need_set_password; then
     printf '\n' | setup-sshd
 else
-    change_user_password /
-    change_ssh_conf_for_password_login /
     printf '\nyes' | setup-sshd
 fi
 

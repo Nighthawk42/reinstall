@@ -90,6 +90,13 @@ you will never use those providers.
 - **Password handling.** Passwords are hashed with SHA-512 before being written
   to the target (`get_password_linux_sha512`). The code comments show deliberate
   thought about plaintext leaking via `/reinstall.log` and shell history.
+- **Credential modes.** `--password` and `--ssh-key` are independent and may be
+  combined: the key goes to `~/.ssh/authorized_keys`, the password to
+  `/etc/shadow`, and `PasswordAuthentication` stays on, so a key that fails to
+  inject cannot lock you out. `--ssh-key` on its own still disables password
+  auth. The decision lives in `set_credentials` (`trans.sh`) and the credential
+  blocks of `debian.cfg`; `reinstall.sh` writes one or both files into
+  `/configs` in the netboot initrd.
 - **Disk targeting.** The main disk is identified by partition-table ID and
   re-verified, with an explicit guard against a bogus value causing every disk to
   be formatted (`get-xda.sh`).

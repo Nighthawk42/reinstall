@@ -45,3 +45,19 @@ jobs:
           # ${{ matrix.command }} wrong-os
           # ${{ matrix.command }} dd --img=https://github.com/
           # ${{ matrix.command }} windows --iso=https://github.com/ --image-name=abc
+
+      # --ssh-key may be given alone or together with --password.
+      # reinstall.sh must then put the matching files into the netboot initrd, so
+      # that a key which fails to land still leaves password login available.
+      # The runner never reboots, so trans.sh is not exercised here.
+      - if: matrix.os == 'ubuntu-latest'
+        env:
+          CI_PUBKEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAtfsTcPBuE1o56Ds4S2nC60KDPb7601IG31z3Uj0eUR ci-example-key
+        run: |
+          sudo bash reinstall.sh --debug --username x --ssh-key "$CI_PUBKEY" debian
+          sudo test -s /reinstall-tmp/initrd/configs/ssh_keys
+          sudo test ! -e /reinstall-tmp/initrd/configs/password-linux-sha512
+
+          sudo bash reinstall.sh --debug --username x --password x --ssh-key "$CI_PUBKEY" debian
+          sudo test -s /reinstall-tmp/initrd/configs/ssh_keys
+          sudo test -s /reinstall-tmp/initrd/configs/password-linux-sha512

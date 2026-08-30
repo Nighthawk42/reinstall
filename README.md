@@ -152,7 +152,7 @@ bash reinstall.sh anolis      7|8|23
 
 - `--username USERNAME` Set the username
 - `--password PASSWORD` Set the password
-- `--ssh-key KEY` Set up SSH login public key, [formatted as follows](#--ssh-key). When using public key, password is empty.
+- `--ssh-key KEY` Set up SSH login public key, [formatted as follows](#--ssh-key). May be combined with `--password`.
 - `--ssh-port PORT` Change the SSH port
 - `--web-port PORT` Change the Web port (for log observation during installation only)
 - `--frpc-config PATH` Add frpc for intranet tunneling. Parameter can be local filepath or HTTP URL of the configuration file.
@@ -223,7 +223,7 @@ bash reinstall.sh dd --img "https://example.com/xxx.xz"
 
 - `--username USERNAME` Set username (for log observation during installation)
 - `--password PASSWORD` Set Password (for log observation during installation)
-- `--ssh-key KEY` Set up SSH login public key (for log observation during installation), [formatted as follows](#--ssh-key). When using public key, password is empty.
+- `--ssh-key KEY` Set up SSH login public key (for log observation during installation), [formatted as follows](#--ssh-key). May be combined with `--password`.
 - `--ssh-port PORT` Change SSH port (for log observation during installation)
 - `--rdp-port PORT` Change RDP port (DD Windows only)
 - `--web-port PORT` Change Web port (for log observation during installation)
@@ -278,7 +278,7 @@ bash reinstall.sh alpine --hold 1
 
 - `--username USERNAME` Set username
 - `--password PASSWORD` Set password
-- `--ssh-key KEY` Set up SSH login public key, [formatted as follows](#--ssh-key). When using public key, password is empty.
+- `--ssh-key KEY` Set up SSH login public key, [formatted as follows](#--ssh-key). May be combined with `--password`.
 - `--ssh-port PORT` Change SSH port
 - `--frpc-config PATH` Add frpc for intranet tunneling. Parameter can be local filepath or HTTP URL of the configuration file.
 
@@ -578,6 +578,12 @@ LAN. The target machine must be able to reach it during installation.
 - `--ssh-key gitlab:your_username`
 - `--ssh-key /path/to/public_key`
 - `--ssh-key C:\path\to\public_key`
+
+`--ssh-key` and `--password` may both be given: the key goes to
+`~/.ssh/authorized_keys`, the password to `/etc/shadow`, and password login stays
+enabled, so a key that fails to land still leaves a way back in.
+
+Giving `--ssh-key` alone turns password authentication off.
 
 ## How to Use an Old Version
 

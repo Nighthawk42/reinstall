@@ -7,26 +7,26 @@ set confhome=https://raw.githubusercontent.com/Nighthawk42/reinstall/main
 set pkgs=curl,cpio,p7zip,dos2unix,jq,xz,gzip,zstd,openssl,bind-utils,libiconv,binutils
 set cmds=curl,cpio,p7zip,dos2unix,jq,xz,gzip,zstd,openssl,nslookup,iconv,ar
 
-rem 65001 代码页会乱码
+rem code page 65001 produces garbled output
 
-rem 不要用 :: 注释
-rem 否则可能会出现 系统找不到指定的驱动器
+rem do not use :: for comments
+rem it can produce "The system cannot find the drive specified"
 
-rem Windows 7 SP1 winhttp 默认不支持 tls 1.2
+rem winhttp on Windows 7 SP1 does not support tls 1.2 by default
 rem https://support.microsoft.com/en-us/topic/update-to-enable-tls-1-1-and-tls-1-2-as-default-secure-protocols-in-winhttp-in-windows-c4bd73d2-31d7-761e-0178-11268bb10392
-rem 有些系统根证书没更新
-rem 所以不要用https
-rem 进入脚本目录
+rem some systems have outdated root certificates
+rem so do not use https
+rem change into the script directory
 cd /d %~dp0
 
-rem 检查是否有管理员权限
+rem check for administrator privileges
 fltmc >nul 2>&1
 if errorlevel 1 (
     echo Please run as administrator^^!
     exit /b
 )
 
-rem 有时 %tmp% 带会话 id，且文件夹不存在
+rem sometimes %tmp% includes a session id and the folder does not exist
 rem https://learn.microsoft.com/troubleshoot/windows-server/shell-experience/temp-folder-with-logon-session-id-deleted
 rem if not exist %tmp% (
 rem     md %tmp%
@@ -37,17 +37,17 @@ rem Server is in an Equinix facility in the US, not a CDN
 set mirror=http://mirrors.kernel.org
 
 call :check_cygwin_installed || (
-    rem win10 arm 支持运行 x86 软件
-    rem win11 arm 支持运行 x86 和 x86_64 软件
+    rem win10 arm can run x86 binaries
+    rem win11 arm can run x86 and x86_64 binaries
 
-    rem windows 11 24h2 没有 wmic
-    rem wmic os get osarchitecture 显示中文，即使设置了 mode con cp select=437
-    rem wmic ComputerSystem get SystemType 显示英文
+    rem windows 11 24h2 has no wmic
+    rem "wmic os get osarchitecture" prints a localized string even with mode con cp select=437
+    rem "wmic ComputerSystem get SystemType" prints English
     rem for /f "tokens=*" %%a in ('wmic ComputerSystem get SystemType ^| find /i "based"') do (
     rem     set "SystemType=%%a"
     rem )
 
-    rem 有的系统精简了 powershell
+    rem some systems have powershell stripped out
     rem for /f "delims=" %%a in ('powershell -NoLogo -NoProfile -NonInteractive -Command "(Get-WmiObject win32_computersystem).SystemType"') do (
     rem     set "SystemType=%%a"
     rem )
@@ -57,10 +57,10 @@ call :check_cygwin_installed || (
         set SystemArch=%%a
     )
 
-    rem 也可以用 PROCESSOR_ARCHITEW6432 和 PROCESSOR_ARCHITECTURE 判断
+    rem PROCESSOR_ARCHITEW6432 and PROCESSOR_ARCHITECTURE could also be used
     rem ARM64 win11  PROCESSOR_ARCHITEW6432   PROCESSOR_ARCHITECTURE
-    rem 原生cmd          未定义                      ARM64
-    rem 32位cmd          ARM64                       x86
+    rem native cmd       undefined                   ARM64
+    rem 32-bit cmd       ARM64                       x86
 
     rem if defined PROCESSOR_ARCHITEW6432 (
     rem     set "SystemArch=%PROCESSOR_ARCHITEW6432%"
@@ -89,9 +89,9 @@ call :check_cygwin_installed || (
         )
     )
 
-    rem win7/8 cygwin 已 EOL，不能用最新 cygwin 源，而要用 Cygwin Time Machine 源
-    rem 但 Cygwin Time Machine 没有国内源
-    rem 为了保证国内下载速度, cygwin EOL 统一使用 cygwin-archive x86 源
+    rem cygwin is EOL on win7/8, so the current cygwin repo cannot be used; use Cygwin Time Machine
+    rem Cygwin Time Machine has no mirror network,
+    rem so EOL cygwin uniformly uses the cygwin-archive x86 repo
     if !CygwinEOL! == 1 (
         set CygwinArch=x86
         set dir=/sourceware/cygwin-archive/20221123
@@ -104,15 +104,15 @@ call :check_cygwin_installed || (
         call :download http://www.cygwin.com/setup-!CygwinArch!.exe %~dp0setup-!CygwinArch!.exe || goto :download_failed
     )
 
-    rem 少于 1M 视为无效
-    rem 有的 IP 被官网拉黑，无法下载 exe，下载得到 html
+    rem smaller than 1M is treated as invalid
+    rem some IPs are blocked by the official site and get html instead of the exe
     for %%A in (setup-!CygwinArch!.exe) do if %%~zA LSS 1048576 (
         echo Invalid Cgywin installer
         del setup-!CygwinArch!.exe
         exit /b 1
     )
 
-    rem 安装 Cygwin
+    rem Install Cygwin
     set site=!mirror!!dir!
     start /wait setup-!CygwinArch!.exe ^
         --allow-unsupported-windows ^
@@ -123,46 +123,46 @@ call :check_cygwin_installed || (
         --local-package-dir %~dp0cygwin-local-package-dir ^
         --packages %pkgs%
 
-    rem 检查 Cygwin 是否成功安装
+    rem verify Cygwin installed successfully
     if errorlevel 1 goto :install_cygwin_failed
     call :check_cygwin_installed || goto :install_cygwin_failed
 )
 
-rem 在c盘根目录下执行 cygpath -ua . 会得到 /cygdrive/c，因此末尾要有 /
+rem running "cygpath -ua ." in C:\ yields /cygdrive/c, so a trailing / is required
 for /f %%a in ('%SystemDrive%\cygwin\bin\cygpath -ua ./') do set thisdir=%%a
 
-rem 下载 reinstall.sh
+rem Download reinstall.sh
 if not exist reinstall.sh (
     call :download_with_curl %confhome%/reinstall.sh %thisdir%reinstall.sh || goto :download_failed
     call :chmod a+x %thisdir%reinstall.sh
 )
 
-rem %* 无法处理 --iso https://x.com/?yyy=123
-rem 为每个参数添加引号，使参数正确传递到 bash
+rem %* cannot handle --iso https://x.com/?yyy=123
+rem quote each argument so they reach bash intact
 rem for %%a in (%*) do (
 rem     set "param=!param! "%%~a""
 rem )
 
-rem 转成 unix 格式，避免用户用 windows 记事本编辑后换行符不对
+rem convert to unix line endings, in case the user edited the file in Windows Notepad
 %SystemDrive%\cygwin\bin\dos2unix -q '%thisdir%reinstall.sh'
 
-rem 用 bash 运行
-rem %SystemDrive%\cygwin\bin\bash -l %thisdir%reinstall.sh %* 运行后会清屏
-rem 因此不能用 -l
-rem 这就需要在 reinstall.sh 里运行 source /etc/profile
-rem 或者添加 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
+rem run it with bash
+rem "%SystemDrive%\cygwin\bin\bash -l %thisdir%reinstall.sh %*" clears the screen
+rem so -l cannot be used
+rem which means reinstall.sh has to run "source /etc/profile"
+rem or add export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 %SystemDrive%\cygwin\bin\bash %thisdir%reinstall.sh %*
 exit /b
 
-rem bits 要求有 Content-Length 才能下载
-rem cloudflare 的 cdn-cgi/trace 没有 Content-Length
-rem 据说如果网络设为“按流量计费” bits 也无法下载
+rem bits requires a Content-Length in order to download
+rem cloudflare's cdn-cgi/trace has no Content-Length
+rem reportedly bits also fails when the connection is set to metered
 rem https://learn.microsoft.com/en-us/windows/win32/bits/http-requirements-for-bits-downloads
 rem bitsadmin /transfer "%~3" /priority foreground %~1 %~2
 
 :download
-rem certutil 会被 windows Defender 报毒
-rem windows server 2019 要用第二条 certutil 命令
+rem certutil gets flagged by Windows Defender
+rem windows server 2019 needs the second certutil command
 echo Downloading: %~1 %~2
 del /q "%~2" 2>nul
 if exist "%~2" (echo Cannot delete %~2 & exit /b 1)
@@ -173,12 +173,12 @@ if not errorlevel 1 if exist "%~2" exit /b 0
 certutil -urlcache -split "%~1" "%~2" >nul
 if not errorlevel 1 if exist "%~2" exit /b 0
 
-rem 下载失败时删除文件，防止下载了一部分导致下次运行时跳过了下载
+rem delete the file on failure, so a partial download is not reused next run
 del /q "%~2" 2>nul
 exit /b 1
 
 :download_with_curl
-rem 加 --insecure 防止以下错误
+rem --insecure is added to avoid the following error
 rem curl: (77) error setting certificate verify locations:
 rem   CAfile: /etc/ssl/certs/ca-certificates.crt
 rem   CApath: none

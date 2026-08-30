@@ -1,11 +1,11 @@
 #!/bin/bash
-# 修复 cloud-init 没有正确渲染 onlink 网关
+# Fix cloud-init not rendering an onlink gateway correctly
 
 set -eE
 os_dir=$1
 
-# 该脚本也会在 alpine live 下调用
-# 防止在 alpine live 下运行 systemctl netplan 报错
+# This script is also called under alpine live
+# Guard against systemctl/netplan errors when running under alpine live
 systemctl() {
     if systemd-detect-virt --chroot; then
         return
@@ -48,11 +48,11 @@ insert_into_file() {
 }
 
 fix_netplan_conf() {
-    # 修改前
+    # before
     # gateway4: 1.1.1.1
     # gateway6: ::1
 
-    # 修改后
+    # after
     # routes:
     #   - to: 0.0.0.0/0
     #     via: 1.1.1.1
@@ -66,28 +66,28 @@ fix_netplan_conf() {
         return
     fi
 
-    # 判断 bug 是否已经修复
+    # check whether the bug is already fixed
     if grep -q 'on-link:' "$conf"; then
         return
     fi
 
-    # 获取网关
+    # get the gateway
     gateways=$(grep 'gateway[4|6]:' "$conf" | awk '{print $2}')
     if [ -z "$gateways" ]; then
         return
     fi
 
-    # 获取缩进
+    # get the indentation
     spaces=$(grep 'gateway[4|6]:' "$conf" | head -1 | grep -o '^[[:space:]]*')
 
     {
-        # 网关头部
+        # gateway header
         cat <<EOF
 ${spaces}routes:
 EOF
-        # 网关条目
+        # gateway entry
         for gateway in $gateways; do
-            # debian 11 的 netplan 不支持 to: default
+            # netplan on debian 11 does not support "to: default"
             case $gateway in
             *.*) to='0.0.0.0/0' ;;
             *:*) to='::/0' ;;
@@ -101,10 +101,10 @@ EOF
         done
     } | insert_into_file "$conf" before 'match:'
 
-    # 删除原来的条目
+    # remove the original entry
     sed -i '/gateway[4|6]:/d' "$conf"
 
-    # 重新应用配置
+    # re-apply the configuration
     if command -v netplan && {
         systemctl -q is-enabled systemd-networkd || systemctl -q is-enabled NetworkManager
     }; then
@@ -113,19 +113,19 @@ EOF
 }
 
 fix_networkd_conf() {
-    # 修改前 gentoo
+    # before (gentoo)
     # [Route]
     # Gateway=1.1.1.1
     # Gateway=2602::1
 
-    # 修改前 arch
+    # before (arch)
     # [Route]
     # Gateway=1.1.1.1
     #
     # [Route]
     # Gateway=2602::1
 
-    # 修改后
+    # after
     # [Route]
     # Gateway=1.1.1.1
     # GatewayOnLink=yes
@@ -139,21 +139,21 @@ fix_networkd_conf() {
     fi
 
     for conf in $confs; do
-        # 判断 bug 是否已经修复
+        # check whether the bug is already fixed
         if grep -q '^GatewayOnLink=' "$conf"; then
             return
         fi
 
-        # 获取网关
+        # get the gateway
         gateways=$(grep '^Gateway=' "$conf" | cut -d= -f2)
         if [ -z "$gateways" ]; then
             return
         fi
 
-        # 删除原来的条目
+        # remove the original entry
         sed -i '/^\[Route\]/d; /^Gateway=/d; /^GatewayOnLink=/d' "$conf"
 
-        # 创建新条目
+        # create the new entry
         for gateway in $gateways; do
             echo "
 [Route]
@@ -163,23 +163,23 @@ GatewayOnLink=yes
         done >>"$conf"
     done
 
-    # 重新应用配置
-    # networkctl reload 不起作用
+    # re-apply the configuration
+    # networkctl reload has no effect
     if systemctl -q is-enabled systemd-networkd; then
         systemctl restart systemd-networkd
     fi
 }
 
-# ubuntu 18.04 cloud-init 版本 23.1.2，因此不用处理
+# ubuntu 18.04 ships cloud-init 23.1.2, so nothing to do
 
-# debian 10/11 云镜像原本用 ifupdown + resolvconf，脚本改成用 netplan + networkd/resolved
-# debian 12 云镜像: netplan + networkd/resolved
-# 23.1.1 修复
+# the debian 10/11 cloud images used ifupdown + resolvconf; this switches them to netplan + networkd/resolved
+# debian 12 cloud image: netplan + networkd/resolved
+# fixed in 23.1.1
 fix_netplan_conf
 
 # arch: networkd/resolved
 # gentoo: networkd/resolved
-# 24.2 修复
-# 只需对云镜像处理
-# 因为普通安装用的是 alpine 的 cloud-init，版本够新，不用处理
+# fixed in 24.2
+# only the cloud images need this
+# a normal install uses alpine's cloud-init, which is new enough
 fix_networkd_conf

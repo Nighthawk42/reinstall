@@ -3804,8 +3804,8 @@ mod_initrd_alpine() {
     # allow setting an ipv4 onlink gateway
     sed -Ei 's,(0\.0\.0\.0\/0),"\1 onlink",' usr/share/udhcpc/default.script
 
-    # hack 3 网络配置
-    # alpine 根据 MAC_ADDRESS 判断是否有网络
+    # hack 3: network configuration
+    # alpine uses MAC_ADDRESS to decide whether it has a network
     # https://github.com/alpinelinux/mkinitfs/blob/c4c0115f9aa5aa8884c923dc795b2638711bdf5c/initramfs-init.in#L914
     insert_into_file init after 'configure_ip\(\)' <<EOF
         depmod
@@ -3817,9 +3817,9 @@ EOF
 
     # grep -E -A5 'configure_ip\(\)' init
 
-    # hack 4 运行 trans.start
-    # 1. alpine arm initramfs 时间问题 要添加 --no-check-certificate
-    # 2. aws t4g arm 如果没设置console=ttyx，在initramfs里面wget https会出现bad header错误，chroot后正常
+    # hack 4: run trans.start
+    # 1. the alpine arm initramfs has clock issues, so --no-check-certificate is needed
+    # 2. on aws t4g arm without console=ttyx, wget https in the initramfs fails with a bad header error; it works after chroot
     # Connecting to raw.githubusercontent.com (185.199.108.133:443)
     # 60C0BB2FFAFF0000:error:0A00009C:SSL routines:ssl3_get_record:http request:ssl/record/ssl3_record.c:345:
     # ssl_client: SSL_connect
@@ -3832,7 +3832,7 @@ EOF
         chmod a+x \$sysroot/etc/local.d/trans.start
         ln -s /etc/init.d/local \$sysroot/etc/runlevels/default/
 
-        # 配置 + 自定义驱动
+        # configuration + custom drivers
         for dir in /configs /custom_drivers; do
             if [ -d \$dir ]; then
                 cp -r \$dir \$sysroot/
@@ -3841,7 +3841,7 @@ EOF
         done
 EOF
 
-    # 判断云镜像 debain 能否用云内核
+    # decide whether the debian cloud image can use the cloud kernel
     if is_distro_like_debian; then
         create_can_use_cloud_kernel_sh can_use_cloud_kernel.sh
         insert_into_file init before '^exec (/bin/busybox )?switch_root' <<EOF
@@ -3855,38 +3855,37 @@ mod_initrd() {
     info "mod $nextos_distro initrd"
     install_pkg gzip cpio
 
-    # 解压
-    # 先删除临时文件，避免之前运行中断有残留文件
+    # Extract
+    # remove the temp files first, in case an earlier run was interrupted
     initrd_dir=$tmp/initrd
     mkdir_clear $initrd_dir
     cd $initrd_dir
 
-    # cygwin 下处理 debian initrd 时
-    # 解压/重新打包/删除 initrd 的 /dev/console /dev/null 都会报错
+    # when handling the debian initrd under cygwin,
+    # extracting, repacking and deleting the initrd /dev/console and /dev/null all fail
     # cpio: dev/console: Cannot utime: Invalid argument
     # cpio: ./dev/console: Cannot stat: Bad address
-    # 用 windows 文件管理器可删除
+    # they can be deleted from the windows file manager
 
-    # 但同样运行 zcat /reinstall-initrd | cpio -idm
-    # 打开 C:\cygwin\Cygwin.bat ，运行报错
-    # 打开桌面的 Cygwin 图标，运行就没问题
+    # yet running the same zcat /reinstall-initrd | cpio -idm
+    # from C:\cygwin\Cygwin.bat fails
+    # while running it from the desktop Cygwin icon works
 
     # shellcheck disable=SC2046
-    # nonmatching 是精确匹配路径
+    # nonmatching matches the path exactly
     zcat /reinstall-initrd | cpio -idm \
         $(is_in_windows && echo --nonmatching 'dev/console' --nonmatching 'dev/null')
 
     curl -Lo $initrd_dir/trans.sh $confhome/trans.sh
     if ! grep -iq "$SCRIPT_VERSION" $initrd_dir/trans.sh; then
         error_and_exit "
-This script is outdated, please download reinstall.sh again.
-脚本有更新，请重新下载 reinstall.sh"
+This script is outdated, please download reinstall.sh again."
     fi
 
     curl -Lo $initrd_dir/initrd-network.sh $confhome/initrd-network.sh
     chmod a+x $initrd_dir/trans.sh $initrd_dir/initrd-network.sh
 
-    # 保存配置
+    # Save the configuration
     mkdir -p $initrd_dir/configs
     if [ -n "$ssh_keys" ]; then
         cat <<<"$ssh_keys" >$initrd_dir/configs/ssh_keys
@@ -3897,19 +3896,19 @@ This script is outdated, please download reinstall.sh again.
         cat "$frpc_config" >$initrd_dir/configs/frpc.conf
     fi
 
-    # 收集 cloud-data 打包进 initrd
+    # Collect cloud-data and pack it into the initrd
     if [ -n "$cloud_data" ]; then
         mkdir -p $initrd_dir/configs/cloud-data
         if [ -d "$cloud_data" ]; then
-            # 本地目录：直接复制
+            # a local directory: copy it straight in
             cp "$cloud_data"/* $initrd_dir/configs/cloud-data/
         else
-            # URL：在 host 下载
+            # a URL: download it on the host
             for f in user-data meta-data network-config; do
                 curl -fsSL "$cloud_data/$f" -o "$initrd_dir/configs/cloud-data/$f" 2>/dev/null || true
             done
         fi
-        # 校验：至少要有 user-data
+        # validation: user-data at minimum is required
         [ -f $initrd_dir/configs/cloud-data/user-data ] || error_and_exit "--cloud-data must contain user-data"
         cloud_data_files=$(ls $initrd_dir/configs/cloud-data/ | tr '\n' ' ')
     fi
@@ -3920,7 +3919,7 @@ This script is outdated, please download reinstall.sh again.
         mod_initrd_$nextos_distro
     fi
 
-    # 添加自定义 windows 驱动
+    # Add the custom windows drivers
     if [ "$distro" = windows ] && [ -n "$custom_infs" ]; then
         # shellcheck disable=SC1090
         . <(curl -L $confhome/windows-driver-utils.sh)
@@ -3929,8 +3928,8 @@ This script is outdated, please download reinstall.sh again.
         done
     fi
 
-    # alpine live 不精简 initrd
-    # 因为不知道用户想干什么，可能会用到精简的文件
+    # do not slim down the initrd for alpine live
+    # because we do not know what the user wants; they may need the removed files
     if is_virt && ! is_alpine_live; then
         remove_useless_initrd_files
     fi
@@ -3941,8 +3940,8 @@ This script is outdated, please download reinstall.sh again.
         read -r -p 'Press Enter to continue...'
     fi
 
-    # 重建
-    # 注意要用 cpio -H newc 不要用 cpio -c ，不同版本的 -c 作用不一样，很坑
+    # Rebuild
+    # note: use cpio -H newc, not cpio -c, whose meaning differs between versions
     # -c    Use the old portable (ASCII) archive format
     # -c    Identical to "-H newc", use the new (SVR4)
     #       portable format.If you wish the old portable
@@ -3954,10 +3953,10 @@ This script is outdated, please download reinstall.sh again.
 remove_useless_initrd_files() {
     info "slim initrd"
 
-    # 显示精简前的大小
+    # Show the size before slimming
     du -sh .
 
-    # 删除 initrd 里面没用的文件/驱动
+    # Remove unused files/drivers from the initrd
     rm -rf bin/brltty
     rm -rf etc/brltty
     rm -rf sbin/wpa_supplicant
@@ -3967,7 +3966,7 @@ remove_useless_initrd_files() {
         cd lib/modules/*/kernel/drivers/net/ethernet/
         for item in *; do
             case "$item" in
-            # 甲骨文 arm 用自定义镜像支持设为 mlx5 vf 网卡，且不是 azure 那样显示两个网卡
+            # Oracle arm custom images can be set to an mlx5 vf NIC, and unlike azure it does not show two NICs
             # https://debian.pkgs.org/13/debian-main-amd64/linux-image-6.12.43+deb13-cloud-amd64_6.12.43-1_amd64.deb.html
             amazon | google | mellanox | realtek | pensando) ;;
             intel)
@@ -3975,7 +3974,7 @@ remove_useless_initrd_files() {
                     cd "$item"
                     for sub_item in *; do
                         case "$sub_item" in
-                        # 有 e100.ko e1000文件夹 e1000e文件夹
+                        # there is e100.ko plus the e1000 and e1000e folders
                         e100* | lib* | *vf | idpf) ;;
                         *) rm -rf $sub_item ;;
                         esac
@@ -4015,13 +4014,13 @@ remove_useless_initrd_files() {
         done
     )
 
-    # 显示精简后的大小
+    # Show the size after slimming
     du -sh .
 }
 
 get_unix_path() {
     if is_in_windows; then
-        # 输入的路径是 / 开头也没问题
+        # a path starting with / is fine too
         cygpath -u "$1"
     else
         printf '%s' "$1"
@@ -4029,31 +4028,31 @@ get_unix_path() {
 }
 
 init_basearch() {
-    # 设置 basearch
+    # Set basearch
     if is_in_windows; then
         # x86-based PC
         # x64-based PC
         # ARM-based PC
         # ARM64-based PC
 
-        # 三种方法都不需要管理员运行
+        # none of the three methods need administrator rights
         if false; then
-            # 如果机器没有 wmic 则需要下载 wmic.ps1，但此时未判断国内外，还是用国外源
+            # a machine without wmic needs wmic.ps1 downloaded
             basearch=$(wmic ComputerSystem get SystemType | grep '=' | cut -d= -f2 | cut -d- -f1)
         elif true; then
             basearch=$(reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v PROCESSOR_ARCHITECTURE |
                 grep . | tail -1 | awk '{print $NF}')
         else
-            # 也可以用
+            # this also works
             basearch=$(cmd /c "if defined PROCESSOR_ARCHITEW6432 (echo %PROCESSOR_ARCHITEW6432%) else (echo %PROCESSOR_ARCHITECTURE%)")
         fi
     else
-        # archlinux 云镜像没有 arch 命令
+        # the archlinux cloud image has no arch command
         # https://en.wikipedia.org/wiki/Uname
         basearch=$(uname -m)
     fi
 
-    # 统一架构名称，并强制 64 位
+    # Normalize the architecture name and force 64-bit
     case "$(echo $basearch | to_lower)" in
     i?86 | x64 | x86* | amd64)
         basearch=x86_64
@@ -4068,12 +4067,12 @@ init_basearch() {
 }
 
 init_confhome() {
-    # 设置 confhome
-    # 未测试
+    # Set confhome
+    # untested
     if false && [[ "$confhome" = http*://raw.githubusercontent.com/* ]]; then
         repo=$(echo $confhome | cut -d/ -f4,5)
         branch=$(echo $confhome | cut -d/ -f6)
-        # 避免脚本更新时，文件不同步造成错误
+        # avoids errors from files being out of sync while the script is updated
         if [ -z "$commit" ]; then
             commit=$(curl -L https://api.github.com/repos/$repo/git/refs/heads/$branch |
                 grep '"sha"' | grep -Eo '[0-9a-f]{40}')
@@ -4093,8 +4092,8 @@ remove_exist_reinstall_efi_dir() {
     else
         dirs=$(get_maybe_efi_dirs_in_linux)
     fi
-    # 后期可能会将 reinstall-vmlinuz 和 reinstall-initrd 放到 efi 分区下
-    # 因此也删除它们
+    # reinstall-vmlinuz and reinstall-initrd may later be placed on the efi partition,
+    # so delete those too
     for dir in $dirs; do
         rm -f "$dir/reinstall-vmlinuz"
         rm -f "$dir/reinstall-initrd"
@@ -4113,8 +4112,8 @@ remove_exist_reinstall_efi_dir() {
 
 #             linux                                      windows
 # bios        /boot/grub*/custom.cfg                     /cygdrive/c/grub/grub.cfg
-# efi         efi分区的/EFI/reinstall/grub.cfg           /cygdrive/c/grub.cfg
-# efi文件夹    efi分区的/EFI/reinstall/                  /cygdrive/a/EFI/reinstall/
+# efi         /EFI/reinstall/grub.cfg on the efi partition   /cygdrive/c/grub.cfg
+# efi folder  /EFI/reinstall/ on the efi partition           /cygdrive/a/EFI/reinstall/
 
 init_bootloader_facts() {
     if is_in_windows; then
@@ -4137,8 +4136,8 @@ init_bootloader_facts() {
                     # alpine debian ubuntu
                     _grub_cfg=$(grep -o '[^ ]*grub.cfg' "$(get_cmd_path update-grub)" | head -1)
                 else
-                    # 找出主配置文件（含有menuentry|blscfg）
-                    # 有没有可能在 efi 目录?
+                    # find the main config file (the one with menuentry|blscfg)
+                    # could it be in the efi directory?
                     _grub_cfg=$(find_grub_extlinux_cfg '/boot/grub*' grub.cfg 'menuentry|blscfg')
                 fi
                 target_cfg=$(dirname $_grub_cfg)/custom.cfg
@@ -4159,11 +4158,11 @@ init_bootloader_facts() {
     fi
 }
 
-# 重新生成 grub.cfg
-# 因为有些机子例如hython debian的grub.cfg少了40_custom 41_custom 部分
+# Regenerate grub.cfg
+# because on some machines, e.g. hython debian, grub.cfg is missing the 40_custom and 41_custom parts
 recreate_grub_or_extlinux_cfg() {
-    # 没用到原机的 grub 和 extlinux
-    # 因此不需要重新生成 grub.cfg 或 extlinux.conf
+    # the machine's own grub and extlinux are not used,
+    # so there is no need to regenerate grub.cfg or extlinux.conf
     if is_efi || is_in_windows; then
         return
     fi
@@ -4171,13 +4170,13 @@ recreate_grub_or_extlinux_cfg() {
     if is_mbr_using_grub; then
         info "recreate grub.cfg"
 
-        # nixos 手动执行 grub-mkconfig -o /boot/grub/grub.cfg 会丢失系统启动条目
-        # 正确的方法是修改 configuration.nix 的 boot.loader.grub.extraEntries
-        # 但是修改 configuration.nix 不是很好，因此改成修改 grub.cfg
+        # running grub-mkconfig -o /boot/grub/grub.cfg by hand on nixos loses the system boot entries
+        # the correct way is to edit boot.loader.grub.extraEntries in configuration.nix
+        # but editing configuration.nix is undesirable, so edit grub.cfg instead
         if [ -x /nix/var/nix/profiles/system/bin/switch-to-configuration ]; then
-            # 生成 grub.cfg
+            # generate grub.cfg
             /nix/var/nix/profiles/system/bin/switch-to-configuration boot
-            # 手动启用 41_custom
+            # enable 41_custom manually
             nixos_grub_home="$(dirname "$(readlink -f "$(get_cmd_path grub-mkconfig)")")/.."
             $nixos_grub_home/etc/grub.d/41_custom >>"$(dirname "$target_cfg")/grub.cfg"
         elif is_have_cmd update-grub; then
@@ -4186,7 +4185,7 @@ recreate_grub_or_extlinux_cfg() {
             $grub-mkconfig -o $target_cfg
         fi
     elif is_have_cmd update-extlinux; then
-        # alpine 才有 update-extlinux
+        # only alpine has update-extlinux
         info "recreate extlinux.conf"
         update-extlinux
     else
@@ -4194,7 +4193,7 @@ recreate_grub_or_extlinux_cfg() {
     fi
 }
 
-# 删除之前的 reinstall 启动项
+# Remove the previous reinstall boot entry
 remove_exist_reinstall() {
     info "remove exist reinstall"
 
@@ -4204,7 +4203,7 @@ remove_exist_reinstall() {
         rm -f /cygdrive/$c/reinstall-vmlinuz /cygdrive/$c/reinstall-initrd
     fi
 
-    # 使用外部 grub 时，删除外部 grub.cfg
+    # when using an external grub, delete the external grub.cfg
     if ! is_use_local_grub_extlinux; then
         rm -f "$target_cfg"
     fi
@@ -4228,11 +4227,11 @@ remove_exist_reinstall() {
         if is_efi; then
             # efi
 
-            # 题外话
-            # 1. 如果用本机的 grub，则 custom.cfg 可能在 efi 分区，也可能在 /boot 分区
-            # 2. 有可能没有 /boot 文件夹
-            #    如果 nixos 的 efi 挂载到 /efi，则不会生成 /boot 文件夹
-            # 3. find 不存在的路径会报错
+            # side notes
+            # 1. with the machine's own grub, custom.cfg may be on the efi partition or the /boot partition
+            # 2. there may be no /boot folder at all
+            #    if the nixos efi is mounted at /efi, no /boot folder is created
+            # 3. find errors out on a path that does not exist
             remove_exist_reinstall_efi_dir
 
             install_pkg efibootmgr
@@ -4242,19 +4241,19 @@ remove_exist_reinstall() {
         else
             # bios
 
-            # 删除 reinstall 条目
+            # remove the reinstall entry
             if [ -f "$target_cfg" ]; then
                 sed -i "/^$BOOT_ENTEY_START_MARK/,/^$BOOT_ENTEY_END_MARK/d" "$target_cfg"
             fi
 
-            # 清除 next entry
+            # clear next entry
             if is_use_local_grub; then
                 $grub-editenv - unset next_entry
             elif is_use_local_extlinux; then
                 extlinux --clear-once "$(dirname "$target_cfg")"
             fi
 
-            # 重新创建 grub.cfg / extlinux.conf
+            # regenerate grub.cfg / extlinux.conf
             recreate_grub_or_extlinux_cfg
         fi
     fi
@@ -4268,12 +4267,12 @@ reset_and_exit() {
         info "Caught Ctrl+C, reseting..."
     fi
 
-    # 清除
+    # Clean up
     remove_exist_reinstall
     rm -rf "$tmp"
     echo "reset done."
 
-    # 退出
+    # Exit
     if $from_ctrl_c; then
         exit 1
     else
@@ -4281,38 +4280,38 @@ reset_and_exit() {
     fi
 }
 
-# 脚本入口
+# Script entry point
 
-# windows 环境下的额外初始化
+# Extra initialization under windows
 if is_in_windows; then
-    # win系统盘
+    # the windows system drive
     c=$(echo $SYSTEMDRIVE | cut -c1)
 
-    # 64位系统 + 32位cmd/cygwin，需要添加 PATH，否则找不到64位系统程序，例如bcdedit
+    # a 64-bit system with a 32-bit cmd/cygwin needs PATH extended, or 64-bit programs such as bcdedit are not found
     sysnative=$(cygpath -u $WINDIR\\Sysnative)
     if [ -d $sysnative ]; then
         PATH=$PATH:$sysnative
     fi
 
-    # 更改 windows 命令输出语言为英文
-    # chcp 会清屏
+    # Switch the windows command output language to English
+    # chcp clears the screen
     mode.com con cp select=437 >/dev/null
 
-    # 为 windows 程序输出删除 cr
+    # Strip CR from the output of windows programs
     for exe in $WINDOWS_EXES; do
-        # 如果我们覆写了 wmic()，则先将 wmic() 重命名为 _wmic()
+        # if we overrode wmic(), rename wmic() to _wmic() first
         if get_function $exe >/dev/null 2>&1; then
             eval "_$(get_function $exe)"
         fi
-        # 使用以下方法重新生成 wmic()
-        # 调用链：wmic() -> run_with_del_cr(wmic) -> _wmic() -> command wmic
+        # then regenerate wmic() as follows
+        # call chain: wmic() -> run_with_del_cr(wmic) -> _wmic() -> command wmic
         eval "$exe(){ $(get_function_content run_with_del_cr_template | sed "s/\$exe/$exe/g") }"
     done
 fi
 
-# 检查 root
+# Check for root
 if is_in_windows; then
-    # 64位系统 + 32位cmd/cygwin，运行 openfiles 报错：目标系统必须运行 32 位的操作系统
+    # on a 64-bit system with a 32-bit cmd/cygwin, openfiles fails with: the target system must be running a 32-bit OS
     if ! fltmc >/dev/null 2>&1; then
         error_and_exit "Please run as administrator."
     fi
@@ -4322,22 +4321,22 @@ else
     fi
 fi
 
-# 不支持 Live OS 下运行
+# Running under a Live OS is not supported
 if mount | grep -q 'tmpfs on / type tmpfs'; then
     error_and_exit "Can't run this script in Live OS."
 fi
 
-# 不支持容器虚拟化
+# Container virtualization is not supported
 if is_in_container; then
     error_and_exit "Not Supported OS in Container.\nPlease use https://github.com/LloydAsp/OsMutation"
 fi
 
-# 不支持安全启动
+# Secure Boot is not supported
 if is_secure_boot_enabled; then
     error_and_exit "Please disable secure boot first."
 fi
 
-# 整理参数
+# Assemble the arguments
 long_opts=
 for o in confhome: ci installer debug minimal allow-ping help \
     add-driver: \
@@ -4364,12 +4363,12 @@ for o in confhome: ci installer debug minimal allow-ping help \
     long_opts+=$o
 done
 
-# 使用 getopt 解析参数
+# Parse the arguments with getopt
 if ! ORIGINAL_OPTS=$(getopt -n $0 -o "h,x" --long "$long_opts" -- "$@"); then
     exit 1
 fi
 
-# 第一遍扫描，验证要安装的系统和版本
+# First scan: validate the system and version to install
 eval set -- "$ORIGINAL_OPTS"
 while true; do
     case "$1" in
@@ -4395,11 +4394,11 @@ while true; do
     esac
 done
 
-# 初始化重要变量
-# wmic 随时会用到
-# wmic 需要下载 wmic.ps1，需要从 confhome 得到，要先将 confhome 改成国内
-# 而 wmic.ps1 又放在 $tmp 目录，因此要先创建临时目录
-# 处理 --frpc-config 时会下载文件，因此在处理参数前就创建临时目录
+# Initialize the important variables
+# wmic may be needed at any time
+# wmic needs wmic.ps1, which comes from confhome
+# and wmic.ps1 lives in $tmp, so the temp directory must be created first
+# handling --frpc-config downloads a file, so create the temp directory before parsing arguments
 mkdir_clear "$tmp"
 init_basearch
 init_confhome
@@ -4409,10 +4408,10 @@ if [ "$distro" = reset ]; then
     reset_and_exit
 fi
 
-# 安装必备组件
+# Install the required components
 install_pkg curl grep
 
-# 第二遍扫描，处理参数
+# Second scan: process the arguments
 eval set -- "$ORIGINAL_OPTS"
 # shellcheck disable=SC2034
 while true; do
@@ -4422,7 +4421,7 @@ while true; do
         shift 2
         ;;
     -x | --debug)
-        # 第一遍扫描已处理
+        # already handled in the first scan
         shift
         ;;
     -h | --help)
@@ -4464,20 +4463,20 @@ while true; do
         http://* | https://*)
             frpc_config_url=$2
             frpc_config=$tmp/frpc.conf
-            # 用 file 识别文件类型？
+            # use file to detect the type?
             if ! curl -L "$frpc_config_url" -o "$frpc_config"; then
                 error_and_exit "Can't get frpc config from $frpc_config_url"
             fi
             ;;
         *)
-            # windows 路径转换
+            # windows path conversion
             if ! { frpc_config=$(get_unix_path "$2") && [ -f "$frpc_config" ]; }; then
                 error_and_exit "File not exists: $2"
             fi
             ;;
         esac
 
-        # 转为绝对路径
+        # convert to an absolute path
         frpc_config=$(readlink -f "$frpc_config")
 
         shift 2
@@ -4539,12 +4538,12 @@ EOF
             fi
             ;;
         *)
-            # 检测值是否为 ssh key
+            # check whether the value is an ssh key
             if is_valid_ssh_key "$2"; then
                 ssh_key=$2
             else
-                # 视为路径
-                # windows 路径转换
+                # treat it as a path
+                # windows path conversion
                 if ! { ssh_key_file=$(get_unix_path "$2") && [ -f "$ssh_key_file" ]; }; then
                     ssh_key_error_and_exit "SSH Key/File/Url \"$2\" is invalid."
                 fi
@@ -4553,13 +4552,13 @@ EOF
             ;;
         esac
 
-        # 检查 key 格式
+        # check the key format
         if ! is_valid_ssh_key "$ssh_key"; then
             ssh_key_error_and_exit "SSH Key/File/Url \"$2\" is invalid."
         fi
 
-        # 保存 key
-        # 不用处理注释，可以支持写入 authorized_keys
+        # save the key
+        # comments need no handling, so it can be written to authorized_keys
         if [ -n "$ssh_keys" ]; then
             ssh_keys+=$'\n'
         fi
@@ -4585,29 +4584,29 @@ EOF
     --add-driver)
         [ -n "$2" ] || error_and_exit "Need value for $1"
 
-        # windows 路径转换
+        # windows path conversion
         inf_or_dir=$(get_unix_path "$2")
 
-        # alpine busybox 不支持 readlink -m
+        # alpine busybox does not support readlink -m
         # readlink -m /asfsafasfsaf/fasf
-        # 因此需要先判断路径是否存在
+        # so check first whether the path exists
 
         if ! [ -d "$inf_or_dir" ] &&
             ! { [ -f "$inf_or_dir" ] && [[ "$inf_or_dir" =~ \.[iI][nN][fF]$ ]]; }; then
             error_and_exit "Not a inf or dir: $2"
         fi
 
-        # 转为绝对路径
+        # convert to an absolute path
         inf_or_dir=$(readlink -f "$inf_or_dir")
 
         info "finding inf in $inf_or_dir"
-        # find /tmp -type f -iname '*.inf' 只要 /tmp 存在就会返回 0
+        # find /tmp -type f -iname '*.inf' returns 0 as long as /tmp exists
         if infs=$(find "$inf_or_dir" -type f -iname '*.inf' | grep .); then
             while IFS= read -r inf; do
-                # 防止重复添加
+                # avoid adding duplicates
                 if ! grep -Fqx "$inf" <<<"$custom_infs"; then
                     echo "inf found: $inf"
-                    # 一行一个 inf
+                    # one inf per line
                     if [ -n "$custom_infs" ]; then
                         custom_infs+=$'\n'
                     fi
@@ -4669,15 +4668,15 @@ EOF
     esac
 done
 
-# 检查必须的参数
+# Check the required arguments
 verify_os_args
 
-# 用户名
+# Username
 if ! is_netboot_xyz && [ -z "$username" ]; then
     prompt_username
 fi
 
-# 密码
+# Password
 if ! is_netboot_xyz && [ -z "$ssh_keys" ] && [ -z "$password" ]; then
     if is_use_dd; then
         show_dd_password_tips
@@ -4685,8 +4684,8 @@ if ! is_netboot_xyz && [ -z "$ssh_keys" ] && [ -z "$password" ]; then
     prompt_password
 fi
 
-# 强制忽略/强制添加 --ci 参数
-# debian 不强制忽略 ci 留作测试
+# Force-ignore / force-add the --ci argument
+# debian does not force-ignore ci, so it can still be tested
 case "$distro" in
 dd | windows | netboot.xyz | kali | alpine | arch)
     if is_use_cloud_image; then
@@ -4706,16 +4705,16 @@ redhat | centos | almalinux | rocky | fedora | ubuntu)
     ;;
 esac
 
-# 检查内存
-# 会用到 wmic，因此要在设置国内 confhome 后使用
+# Check the memory
+# this uses wmic, so it must run after confhome is set
 check_ram
 
-# 以下目标系统不需要两步安装
+# The following target systems do not need a two-step install
 # alpine
 # debian
 # el7 x86_64 >=1g
 # el7 aarch64 >=1.5g
-# el8/9/fedora 任何架构 >=2g
+# el8/9/fedora on any architecture with >=2g
 if is_netboot_xyz ||
     { ! is_use_cloud_image && {
         [ "$distro" = "alpine" ] || is_distro_like_debian ||
@@ -4725,24 +4724,24 @@ if is_netboot_xyz ||
     }; }; then
     setos nextos $distro $releasever
 else
-    # alpine 作为中间系统时，使用最新版
+    # use the latest version when alpine is the intermediate system
     alpine_ver_for_trans=$(get_latest_distro_releasever alpine)
     setos finalos $distro $releasever
     setos nextos alpine $alpine_ver_for_trans
 fi
 
-# 有的机器开启了 kexec，例如腾讯云轻量 debian，要禁用
+# Some machines have kexec enabled, e.g. Tencent Cloud Lighthouse debian; it must be disabled
 if [ -f /etc/default/kexec ]; then
     sed -i 's/LOAD_KEXEC=true/LOAD_KEXEC=false/' /etc/default/kexec
 fi
 
-# 一切就绪，正式下载内核和添加引导项
-# 先删除之前的启动项，再设置 trap
-# 暂时不用 trap，因为 bat 下无效
+# Everything is ready: download the kernel and add the boot entry
+# remove the previous boot entry first, then set the trap
+# the trap is unused for now, because it does not work under bat
 remove_exist_reinstall
 # trap 'reset_and_exit true' SIGINT
 
-# 下载 netboot.xyz / 内核
+# Download netboot.xyz / the kernel
 # shellcheck disable=SC2154
 if is_netboot_xyz; then
     if is_efi; then
@@ -4755,7 +4754,7 @@ if is_netboot_xyz; then
         curl -Lo /reinstall-vmlinuz $nextos_vmlinuz
     fi
 else
-    # 下载 nextos 内核
+    # download the nextos kernel
     info download vmlnuz and initrd
     curl -Lo /reinstall-vmlinuz $nextos_vmlinuz
     curl -Lo /reinstall-initrd $nextos_initrd
@@ -4764,12 +4763,12 @@ else
     fi
 fi
 
-# 修改 alpine debian kali initrd
+# Patch the alpine/debian/kali initrd
 if [ "$nextos_distro" = alpine ] || is_distro_like_debian "$nextos_distro"; then
     mod_initrd
 fi
 
-# 将内核/netboot.xyz.lkrn 放到正确的位置
+# Put the kernel / netboot.xyz.lkrn in the right place
 if false && is_need_boot_vmlinuz; then
     if is_in_windows; then
         cp -f /reinstall-vmlinuz /cygdrive/$c/
@@ -4782,34 +4781,34 @@ if false && is_need_boot_vmlinuz; then
     fi
 fi
 
-# 需要使用 vmlinuz/initrd 引导的情况
+# Cases that must boot via vmlinuz/initrd
 if is_need_boot_vmlinuz; then
-    # win 使用外部 grub
+    # windows uses an external grub
     if is_in_windows; then
         install_grub_win
     else
-        # linux efi 使用外部 grub，因为
-        # 1. 原系统 grub 可能没有去除 aarch64 内核 magic number 校验
-        # 2. 原系统可能不是用 grub
+        # linux efi uses an external grub because
+        # 1. the original grub may not have removed the aarch64 kernel magic number check
+        # 2. the original system may not use grub at all
         if is_efi; then
             install_grub_linux_efi
         fi
     fi
 
-    # 找到 /reinstall-vmlinuz /reinstall-initrd 的绝对路径
+    # Find the absolute paths of /reinstall-vmlinuz and /reinstall-initrd
     if is_in_windows; then
         # dir=/cygwin/
         dir=$(cygpath -m / | cut -d: -f2-)/
     else
-        # extlinux + 单独的 boot 分区
-        # 把内核文件放在 extlinux.conf 所在的目录
+        # extlinux with a separate boot partition:
+        # put the kernel files in the directory holding extlinux.conf
         if is_use_local_extlinux && is_boot_in_separate_partition; then
             dir=
         else
-            # 获取当前系统根目录在 btrfs 中的绝对路径
+            # get the absolute path of the current system root within btrfs
             if is_os_in_btrfs; then
                 # btrfs subvolume show /
-                # 输出可能是 / 或 root 或 @/.snapshots/1/snapshot
+                # the output may be /, root, or @/.snapshots/1/snapshot
                 dir=$(btrfs subvolume show / | head -1)
                 if ! [ "$dir" = / ]; then
                     dir="/$dir/"
@@ -4824,7 +4823,7 @@ if is_need_boot_vmlinuz; then
     initrd=${dir}reinstall-initrd
     firmware=${dir}reinstall-firmware
 
-    # 设置 linux initrd 命令
+    # Build the linux/initrd commands
     if is_use_local_extlinux; then
         linux_cmd=LINUX
         initrd_cmd=INITRD
@@ -4838,7 +4837,7 @@ if is_need_boot_vmlinuz; then
         fi
     fi
 
-    # 设置 cmdlind initrds
+    # Build the cmdline initrds
     if ! is_netboot_xyz; then
         find_main_disk
         build_cmdline
@@ -4854,8 +4853,8 @@ if is_need_boot_vmlinuz; then
         echo "$target_cfg"
         extlinux_dir="$(dirname "$target_cfg")"
 
-        # 不起作用
-        # 好像跟 extlinux --once 有冲突
+        # has no effect
+        # seems to conflict with extlinux --once
         sed -i "/^MENU HIDDEN/d" "$target_cfg"
         sed -i "/^TIMEOUT /d" "$target_cfg"
 
@@ -4869,34 +4868,34 @@ LABEL reinstall
   $([ -n "$cmdline" ] && echo "APPEND $cmdline")
 $BOOT_ENTEY_END_MARK
 EOF
-        # 设置重启引导项
+        # Set the reboot boot entry
         extlinux --once=reinstall $extlinux_dir
 
-        # 复制文件到 extlinux 工作目录
+        # Copy the files into the extlinux working directory
         if is_boot_in_separate_partition; then
             info "copying files to $extlinux_dir"
             is_have_initrd && cp -f /reinstall-initrd $extlinux_dir
             is_use_firmware && cp -f /reinstall-firmware $extlinux_dir
-            # 放最后，防止前两条返回非 0 而报错
+            # put this last, so a non-zero return from the first two does not error out
             cp -f /reinstall-vmlinuz $extlinux_dir
         fi
     else
-        # cloudcone 从光驱的 grub 启动，再加载硬盘的 grub.cfg
+        # cloudcone boots grub from the optical drive, which then loads grub.cfg from disk
         # menuentry "Grub 2" --id grub2 {
         #         set root=(hd0,msdos1)
         #         configfile /boot/grub2/grub.cfg
         # }
 
-        # 加载后 $prefix 依然是光驱的 (hd96)/boot/grub
-        # 导致找不到 $prefix 目录的 grubenv，因此读取不到 next_entry
-        # 以下方法为 cloudcone 重新加载 grubenv
+        # after loading, $prefix is still the optical drive (hd96)/boot/grub
+        # so grubenv in $prefix cannot be found and next_entry cannot be read
+        # the following reloads grubenv for cloudcone
 
-        # 需查找 2*2 个文件夹
-        # 分区：系统 / boot
-        # 文件夹：grub / grub2
+        # 2*2 folders must be searched
+        # partition: system or boot
+        # folder: grub or grub2
         # shellcheck disable=SC2121,SC2154
-        # cloudcone debian 能用但 ubuntu 模板用不了
-        # ubuntu 模板甚至没显示 reinstall menuentry
+        # works on cloudcone debian but not on the ubuntu template
+        # the ubuntu template does not even show the reinstall menuentry
         load_grubenv_if_not_loaded() {
             if ! [ -s $prefix/grubenv ]; then
                 for dir in /boot/grub /boot/grub2 /grub /grub2; do
@@ -4916,8 +4915,8 @@ EOF
             fi
         }
 
-        # 生成 grub 配置
-        # 实测 centos 7 lvm 要手动加载 lvm 模块
+        # Generate the grub configuration
+        # in practice centos 7 lvm needs the lvm module loaded manually
         info grub
         echo $target_cfg
 
@@ -4925,18 +4924,18 @@ EOF
 
         get_function_content load_grubenv_if_not_loaded >>$target_cfg
 
-        # 原系统为 openeuler 云镜像，需要添加 --unrestricted，否则要输入密码
+        # the original system was an openeuler cloud image, which needs --unrestricted or it asks for a password
         del_empty_lines <<EOF | del_comment_lines | tee -a $target_cfg
 set timeout_style=menu
 set timeout=5
 menuentry "$(get_entry_name)" --unrestricted {
     $(! is_in_windows && echo 'insmod lvm')
     $(is_os_in_btrfs && echo 'set btrfs_relative_path=n')
-    # fedora efi 没有 load_video
+    # the fedora efi has no load_video
     insmod all_video
     # set gfxmode=800x600
     # set gfxpayload=keep
-    # terminal_output gfxterm 在 vultr 上会花屏
+    # terminal_output gfxterm corrupts the display on vultr
     # terminal_output console
     search --no-floppy --file --set=root $vmlinuz
     $linux_cmd $vmlinuz $cmdline
@@ -4945,7 +4944,7 @@ menuentry "$(get_entry_name)" --unrestricted {
 EOF
         echo '### END reinstall.sh ###' >>$target_cfg
 
-        # 设置重启引导项
+        # Set the reboot boot entry
         if is_use_local_grub; then
             $grub-reboot "$(get_entry_name)"
         fi
@@ -5010,7 +5009,7 @@ elif [ "$distro" = dd ]; then
     fi
 
 else
-    # 普通 linux
+    # a normal linux
     info "While Install (View Logs)"
     echo "Username: $username"
     if [ -n "$ssh_keys" ]; then
@@ -5039,25 +5038,15 @@ fi
 
 echo
 if [ "$distro" = netboot.xyz ]; then
-    echo '重启后进入 netboot.xyz。'
-    echo "或者现在运行 \"$reinstall_____ reset\" 以清除该引导项。"
-    echo
     echo 'Reboot to start netboot.xyz.'
     echo "Or run \"$reinstall_____ reset\" now to clear this boot entry."
     echo
 
 elif [ "$distro" = alpine ] && [ "$hold" = 1 ]; then
-    echo '重启后进入 Alpine Live OS。'
-    echo "或者现在运行 \"$reinstall_____ reset\" 以清除该引导项。"
-    echo
     echo 'Reboot to start Alpine Live OS.'
     echo "Or run \"$reinstall_____ reset\" now to clear this boot entry."
     echo
 else
-    warn false '警告：重装会清除主硬盘的所有数据，包括所有分区！'
-    echo '重启后开始重装。'
-    echo "或者现在运行 \"$reinstall_____ reset\" 以取消重装。"
-    echo
     warn false 'Warning: Reinstalling will erase all data on the main disk, including all partitions!'
     echo 'Reboot to start the reinstallation.'
     echo "Or run \"$reinstall_____ reset\" now to cancel the reinstallation."

@@ -6,7 +6,7 @@
 # alpine 默认没有 bash，因此 shebang 用 sh，再 exec 切换到 bash
 
 set -eE
-confhome=https://raw.githubusercontent.com/bin456789/reinstall/main
+confhome=https://raw.githubusercontent.com/Nighthawk42/reinstall/main
 
 # 用于判断 reinstall.sh 和 trans.sh 是否兼容
 SCRIPT_VERSION=4BACD833-A585-23BA-6CBB-9AA4E08E0004
@@ -98,13 +98,14 @@ Usage: $reinstall_____ rocky       8|9|10
                        [--ssh-port    PORT]
                        [--web-port    PORT]
                        [--frpc-config PATH]
+                       [--confhome    URL]
 
                        For Windows Only:
                        [--allow-ping]
                        [--rdp-port    PORT]
                        [--add-driver  INF_OR_DIR]
 
-Manual: https://github.com/bin456789/reinstall
+Manual: https://github.com/Nighthawk42/reinstall
 
 EOF
     exit 1
@@ -4348,7 +4349,7 @@ fi
 
 # 整理参数
 long_opts=
-for o in ci installer debug minimal allow-ping help \
+for o in confhome: ci installer debug minimal allow-ping help \
     add-driver: \
     hold: sleep: \
     iso: \
@@ -4382,6 +4383,13 @@ fi
 eval set -- "$ORIGINAL_OPTS"
 while true; do
     case "$1" in
+    --confhome)
+        # must be handled in this first scan: init_confhome runs
+        # before the second scan
+        [ -n "$2" ] || error_and_exit "Need value for $1"
+        confhome=${2%/}
+        shift 2
+        ;;
     -x | --debug)
         set -x
         shift
@@ -4419,6 +4427,10 @@ eval set -- "$ORIGINAL_OPTS"
 # shellcheck disable=SC2034
 while true; do
     case "$1" in
+    --confhome)
+        # handled in the first scan
+        shift 2
+        ;;
     -x | --debug)
         # 第一遍扫描已处理
         shift

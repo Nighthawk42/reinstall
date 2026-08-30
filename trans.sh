@@ -1393,47 +1393,47 @@ install_alpine() {
     fw_pkgs=$(get_alpine_firmware_pkgs)
 
     if $hack_lowram; then
-        # 预先加载需要的模块
+        # preload the required modules
         if rc-service -q modloop status; then
             modules="ext4 vfat nls_utf8 nls_cp437"
             for mod in $modules; do
                 modprobe $mod
             done
-            # crc32c 等于 crc32c-intel
-            # 没有 sse4.2 的机器加载 crc32c 时会报错 modprobe: ERROR: could not insert 'crc32c_intel': No such device
+        # crc32c is the same as crc32c-intel
+        # loading crc32c on a machine without sse4.2 fails with modprobe: ERROR: could not insert 'crc32c_intel': No such device
             modprobe crc32c || modprobe crc32c-generic
         fi
 
-        # 删除 modloop ，释放内存
+        # remove modloop to free memory
         ensure_service_stopped modloop
         rm -f /lib/modloop-lts /lib/modloop-virt
     fi
 
-    # bios机器用 setup-disk 自动分区会有 boot 分区
-    # 因此手动分区安装
+    # on a bios machine, automatic partitioning by setup-disk creates a boot partition,
+    # so partition manually instead
     create_part
     mount_part_basic_layout /os /os/boot/efi
 
-    # 创建 swap
+    # Create swap
     if $hack_lowram; then
         create_swap $swap_size /os/swapfile
     fi
 
-    # 网络配置
+    # Network configuration
     create_ifupdown_config /etc/network/interfaces
     echo
     cat -n /etc/network/interfaces
     echo
 
-    # 在 arm netboot initramfs init 中
-    # 如果识别到rtc硬件，就往系统添加hwclock服务，否则添加swclock
-    # 这个设置也被复制到安装的系统中
-    # 但是从initramfs chroot到真正的系统后，是能识别rtc硬件的
-    # 所以我们手动改用hwclock修复这个问题
+    # in the arm netboot initramfs init,
+    # an hwclock service is added when rtc hardware is detected, otherwise swclock is used
+    # that choice is copied into the installed system as well
+    # but once chrooted from the initramfs into the real system, the rtc hardware is detectable
+    # so switch to hwclock manually to fix this
     rc-update del swclock boot || true
     rc-update add hwclock boot
 
-    # 通过 setup-alpine 安装会启用以下几个服务
+    # installing via setup-alpine enables the following services
     # https://github.com/alpinelinux/alpine-conf/blob/3.18.1/setup-alpine.in#L229
 
     # boot
@@ -1446,106 +1446,106 @@ install_alpine() {
         rc-update add acpid
     fi
 
-    # 如果是 vm 就用 virt 内核
+    # use the virt kernel on a VM
     if is_virt; then
         kernel_flavor="virt"
     else
         kernel_flavor="lts"
     fi
 
-    # 重置为官方仓库配置
-    # 国内机可能无法访问mirror列表而报错
+    # Reset to the official repository configuration
+    # some machines cannot reach the mirror list and error out
     if false; then
         true >/etc/apk/repositories
         setup-apkrepos -1
     fi
 
-    # setup-disk 安装 grub 跳过了添加引导项到 nvram
-    # 防止部分机器不会 fallback 到 bootx64.efi
+    # setup-disk installs grub but skips adding the boot entry to nvram
+    # this stops machines that do not fall back to bootx64.efi from failing
     if is_efi; then
         apk add efibootmgr
         sed -i 's/--no-nvram//' "$(which setup-disk)"
     fi
 
-    # 安装到硬盘
-    # alpine默认使用 syslinux (efi 环境除外)，这里强制使用 grub，方便用脚本再次重装
+    # Install to disk
+    # alpine defaults to syslinux (except under efi); force grub so the script can reinstall again later
     KERNELOPTS="$(get_ttys console=)"
     export KERNELOPTS
     export BOOTLOADER="grub"
     setup-disk -m sys -k $kernel_flavor /os
 
-    # 删除 setup-disk 时自动安装的包
+    # Remove the packages setup-disk pulled in automatically
     apk del e2fsprogs dosfstools efibootmgr grub*
 
-    # 如果没有挂载 /proc
+    # if /proc is not mounted:
 
-    # 1. chroot /os setup-keymap us us 会报错
+    # 1. chroot /os setup-keymap us us fails
     # grep: /proc/filesystems: No such file or directory
 
-    # 2. 安装固件微码会触发 grub-probe，如果没挂载会报错
+    # 2. installing firmware microcode triggers grub-probe, which fails when not mounted
     # Executing grub-2.12-r5.trigger
     # /usr/sbin/grub-probe: error: failed to get canonical path of `/dev/vda1'.
     # ERROR: grub-2.12-r5.trigger: script exited with error 1
 
     mount_pseudo_fs /os
 
-    # azure nvme 实例的 initramfs 需要添加 pci_hyperv 驱动
+    # the initramfs of an azure nvme instance needs the pci_hyperv driver added
     if [ -d /sys/module/pci_hyperv ] &&
         get_drivers "/sys/block/$xda" | grep -qx pci_hyperv; then
         echo 'kernel/drivers/pci/controller/pci-hyperv.ko*' >/os/etc/mkinitfs/features.d/pci-hyperv.modules
         if ! grep -q 'pci-hyperv' /os/etc/mkinitfs/mkinitfs.conf; then
-            # 找到 features=" 开头的行，将最后的"改成 pci-hyperv"
+            # find the line starting with features=" and change the final " into pci-hyperv"
             sed -i '/features="/s/"$/ pci-hyperv"/' /os/etc/mkinitfs/mkinitfs.conf
         fi
         chroot /os mkinitfs -k "$(basename /os/lib/modules/*-*)"
     fi
 
-    # 安装到硬盘后才安装各种应用
-    # 避免占用 Live OS 内存
+    # Install the applications only after installing to disk,
+    # to avoid using up Live OS memory
 
-    # 网络
+    # Network
     # udhcpc
-    # 坑1 ip -4 addr 无法知道是否是 dhcp
-    # 坑2 networking 服务不会运行 udhcpc6
-    # 坑3 h3c 移动云电脑 udhcpc6 无法获取 dhcpv6
+    # trap 1: ip -4 addr cannot tell whether the address came from dhcp
+    # trap 2: the networking service does not run udhcpc6
+    # trap 3: udhcpc6 cannot obtain dhcpv6 on h3c cloud desktops
 
     # dhcpcd
-    # 坑1 slaac默认开了隐私保护，造成ip和后台面板不一致
+    # trap 1: slaac enables privacy extensions by default, so the ip differs from the provider panel
 
-    # slaac方案1: udhcpc + rdnssd
-    # slaac方案2: dhcpcd + 关闭隐私保护
-    # dhcpv6方案: dhcpcd
+    # slaac option 1: udhcpc + rdnssd
+    # slaac option 2: dhcpcd + privacy extensions disabled
+    # dhcpv6 option: dhcpcd
 
-    # 综合使用dhcpcd方案
-    # 1 无需改动/etc/network/interfaces，自动根据ra使用slaac和dhcpv6
-    # 2 自带rdnss支持
-    # 3 唯一要做的是关闭隐私保护
+    # use the dhcpcd option for everything:
+    # 1 no change to /etc/network/interfaces is needed; it follows the ra and uses slaac and dhcpv6 automatically
+    # 2 rdnss support is built in
+    # 3 the only thing left to do is disable privacy extensions
 
-    # 安装 dhcpcd
+    # Install dhcpcd
     chroot /os apk add dhcpcd
     chroot /os sed -i '/^slaac private/s/^/#/' /etc/dhcpcd.conf
     chroot /os sed -i '/^#slaac hwaddr/s/^#//' /etc/dhcpcd.conf
 
-    # 安装其他部件
+    # Install the other components
     chroot /os setup-keymap us us
     chroot /os setup-timezone -i Asia/Shanghai
-    # 3.21 默认是 chrony
-    # 3.22 默认是 busybox ntp
+    # 3.21 defaults to chrony
+    # 3.22 defaults to busybox ntp
     printf '\n' | chroot /os setup-ntp || true
 
-    # 设置公钥
+    # Set the public key
     add_user_if_need /os
     if is_need_set_ssh_keys; then
         set_ssh_keys_and_del_password /os
     fi
 
     # alpine 3.24+
-    # 要从 /etc/inittab 删除多余的 tty0
-    # 否则开机时 vnc 会有两个登录提示，一个是 tty0，一个是 tty1
+    # the extra tty0 must be removed from /etc/inittab
+    # otherwise vnc shows two login prompts at boot, one on tty0 and one on tty1
 
-    # sed 找到 # enable login on alternative console 的行
-    # 用 N 读取下一行到当前空间
-    # 再匹配 \ntty0:
+    # sed finds the "# enable login on alternative console" line,
+    # N reads the next line into the pattern space,
+    # then \ntty0: is matched
     sed -i '
 /^# enable login on alternative console$/{
     N
@@ -1553,36 +1553,36 @@ install_alpine() {
 }
 ' /os/etc/inittab
 
-    # 下载 fix-eth-name
+    # Download fix-eth-name
     download "$confhome/fix-eth-name.sh" /os/fix-eth-name.sh
     download "$confhome/fix-eth-name.initd" /os/etc/init.d/fix-eth-name
     chmod +x /os/etc/init.d/fix-eth-name
     chroot /os rc-update add fix-eth-name boot
 
-    # 安装 frpc
+    # Install frpc
     if ls /configs/frpc.* >/dev/null 2>&1; then
         chroot /os apk add frp
-        # chroot rc-update add 默认添加到 sysinit
-        # 但不加 chroot 默认添加到 default
+        # chroot rc-update add defaults to sysinit
+        # but without chroot it defaults to default
         chroot /os rc-update add frpc boot
         cp -f /configs/frpc.* /os/etc/frp/
     fi
 
-    # setup-disk 会自动选择固件，但不包括微码？
+    # setup-disk selects the firmware automatically, but perhaps not the microcode?
     # https://github.com/alpinelinux/alpine-conf/blob/3.18.1/setup-disk.in#L421
     if fw_pkgs="$fw_pkgs $(get_ucode_firmware_pkgs)" && [ -n "$fw_pkgs" ]; then
         chroot /os apk add $fw_pkgs
     fi
 
-    # 3.19 或以上，非 efi 需要手动安装 grub
+    # on 3.19 and later, a non-efi system needs grub installed manually
     if ! is_efi; then
         chroot /os grub-install --target=i386-pc /dev/$xda
     fi
 
-    # efi grub 添加 fwsetup 条目
+    # add an fwsetup entry to the efi grub
     chroot /os update-grub
 
-    # 是否保留 swap
+    # whether to keep swap
     if [ -e /os/swapfile ]; then
         if false; then
             echo "/swapfile swap swap defaults 0 0" >>/os/etc/fstab
@@ -1607,8 +1607,8 @@ min() {
     printf "%d\n" "$@" | sort -n | head -n 1
 }
 
-# 设置线程
-# 根据 cpu 核数，每个线程的内存，取最小值
+# Set the thread count
+# take the smaller of the cpu core count and the memory per thread
 get_build_threads() {
     threads_per_mb=$1
 
@@ -1634,12 +1634,12 @@ add_systemd_service() {
     download "$confhome/$service_name.service" "$os_dir/etc/systemd/system/$service_name.service"
     chroot "$os_dir" systemctl enable "$service_name.service"
 
-    # aosc 首次开机会执行 preset-all
-    # 因此需要设置 fix-eth-name 的 preset 状态
-    # 不然首次开机 /etc/systemd/system/multi-user.target.wants/fix-eth-name.service 会被删除
-    # 通常 /etc/systemd/system-preset/ 文件夹要新建，因此不放在这里
+    # aosc runs preset-all on first boot,
+    # so the preset state of fix-eth-name must be set
+    # otherwise /etc/systemd/system/multi-user.target.wants/fix-eth-name.service is removed at first boot
+    # /etc/systemd/system-preset/ usually has to be created, so do not put it there
 
-    # 可能是 /usr/lib/systemd/system-preset/ 或者 /lib/systemd/system-preset/
+    # it may be /usr/lib/systemd/system-preset/ or /lib/systemd/system-preset/
     if [ -d "$os_dir/usr/lib/systemd/system-preset" ]; then
         echo "enable $service_name.service" >"$os_dir/usr/lib/systemd/system-preset/01-$service_name.preset"
     else
@@ -1650,8 +1650,8 @@ add_systemd_service() {
 add_fix_eth_name_systemd_service() {
     local os_dir=$1
 
-    # 无需执行 systemctl daemon-reload
-    # 因为 chroot 下执行会提示 Running in chroot, ignoring command 'daemon-reload'
+    # systemctl daemon-reload is unnecessary,
+    # because under chroot it just prints Running in chroot, ignoring command 'daemon-reload'
     download "$confhome/fix-eth-name.sh" "$os_dir/fix-eth-name.sh"
     add_systemd_service "$os_dir" fix-eth-name
 }
@@ -1667,12 +1667,12 @@ add_frpc_systemd_service_if_need() {
         mkdir -p "$os_dir/usr/local/bin"
         mkdir -p "$os_dir/usr/local/etc/frpc"
 
-        # 下载 frpc
-        # 注意下载的 frpc owner 不是 root:root
+        # Download frpc
+        # note the downloaded frpc is not owned by root:root
         frpc_url=$(get_frpc_url linux)
         basename=$(echo "$frpc_url" | awk -F/ '{print $NF}' | sed 's/\.tar\.gz//')
         download "$frpc_url" "$os_dir/frpc.tar.gz"
-        # busybox tar 不支持 wildcard
+        # busybox tar does not support wildcards
         # tar: */frpc: not found in archive
         tar xzf "$os_dir/frpc.tar.gz" "$basename/frpc" -O >"$os_dir/usr/local/bin/frpc"
         rm -f "$os_dir/frpc.tar.gz"
@@ -1681,7 +1681,7 @@ add_frpc_systemd_service_if_need() {
         # frpc conf
         cp -f /configs/frpc.* "$os_dir/usr/local/etc/frpc/"
 
-        # 添加服务
+        # Add the service
         add_systemd_service "$os_dir" frpc
     fi
 }
@@ -1690,11 +1690,11 @@ get_fs_of_mount_point() {
     local mount_point=$1
 
     if ! [ "$mount_point" = / ]; then
-        # 删除最后的若干个 /
+        # remove any trailing /
         mount_point=$(printf "%s" "$mount_point" | sed 's,/*$,,')
     fi
 
-    # findmnt 要安装
+    # findmnt must be installed
     # findmnt "$mount_point" -rno FSTYPE
     mount | awk -v mp="$1" '$3==mp {print $5}' | grep .
 }
@@ -1702,11 +1702,11 @@ get_fs_of_mount_point() {
 basic_init() {
     local os_dir=$1
 
-    # 此时不能用
+    # not usable at this point
     # chroot $os_dir timedatectl set-timezone Asia/Shanghai
     # Failed to create bus connection: No such file or directory
 
-    # debian 11 没有 systemd-firstboot
+    # debian 11 has no systemd-firstboot
     if is_have_cmd_on_disk $os_dir systemd-firstboot; then
         if chroot $os_dir systemd-firstboot --help | grep -wq '\--force'; then
             chroot $os_dir systemd-firstboot --timezone=Asia/Shanghai --force
@@ -1715,7 +1715,7 @@ basic_init() {
         fi
     fi
 
-    # gentoo 不会自动创建 machine-id
+    # gentoo does not create machine-id automatically
     clear_machine_id $os_dir
 
     # sshd
@@ -1741,7 +1741,7 @@ basic_init() {
         change_ssh_port $os_dir $ssh_port
     fi
 
-    # 公钥/密码
+    # public key / password
     add_user_if_need "$os_dir"
     if is_need_set_ssh_keys; then
         set_ssh_keys_and_del_password $os_dir
@@ -1751,9 +1751,9 @@ basic_init() {
         change_ssh_conf_for_password_login $os_dir
     fi
 
-    # 下载 fix-eth-name.service
-    # 即使开了 net.ifnames=0 也需要
-    # 因为 alpine live 和目标系统的网卡顺序可能不同
+    # Download fix-eth-name.service
+    # needed even with net.ifnames=0,
+    # because the NIC order may differ between alpine live and the target system
     add_fix_eth_name_systemd_service $os_dir
 
     # frpc
@@ -1772,7 +1772,7 @@ install_arch_family() {
 
     # shellcheck disable=SC2317
     install_arch() {
-        # 添加 swap
+        # Add swap
         create_swap_if_ram_less_than 1024 $os_dir/swapfile
 
         if false; then
@@ -1783,14 +1783,14 @@ install_arch_family() {
             create_alpine_rootfs_with_arch_install_scripts "$alpine_rootfs" true "$os_dir"
         fi
 
-        # 为了二次运行时 /etc/pacman.conf 未修改
+        # so that /etc/pacman.conf is unmodified on a second run
         if [ -f $alpine_rootfs/etc/pacman.conf.orig ]; then
             cp $alpine_rootfs/etc/pacman.conf.orig $alpine_rootfs/etc/pacman.conf
         else
             cp $alpine_rootfs/etc/pacman.conf $alpine_rootfs/etc/pacman.conf.orig
         fi
 
-        # 设置 repo
+        # Configure the repo
         insert_into_file $alpine_rootfs/etc/pacman.conf before '\[core\]' <<EOF
 SigLevel = Never
 ParallelDownloads = 5
@@ -1811,8 +1811,8 @@ EOF
         # shellcheck disable=SC2154
         echo "Server = $mirror/$dir" >$alpine_rootfs/etc/pacman.d/mirrorlist
 
-        # 安装系统
-        # 要安装分区工具(包含 fsck.xxx)，用于 initramfs 检查分区数据
+        # Install the system
+        # partition tools (including fsck.xxx) are needed so the initramfs can check the partition data
         pkgs="base grub openssh"
 
         # efi fs
@@ -1834,7 +1834,7 @@ EOF
             pkgs="$pkgs sudo"
         fi
 
-        # retry 防止网络问题
+        # retry to survive network problems
         if [ "$alpine_rootfs" = / ]; then
             retry 5 pacstrap -K "$os_dir" $pkgs
             killall -q gpg-agent || true
@@ -1849,10 +1849,10 @@ EOF
         # dns
         cp_resolv_conf $os_dir
 
-        # 挂载伪文件系统
+        # Mount the pseudo filesystems
         mount_pseudo_fs $os_dir
 
-        # 要先设置语言，再安装内核，不然出现
+        # the locale must be set before installing the kernel, otherwise this appears:
         # ==> Creating gzip-compressed initcpio image: '/boot/initramfs-linux.img'
         # bsdtar: bsdtar: Failed to set default locale
         # Failed to set default locale
@@ -1866,88 +1866,88 @@ EOF
             chroot $os_dir pacman -Syu --noconfirm $fw_pkgs
         fi
 
-        # arm 的内核有多种选择，默认是 linux-aarch64，所以要添加 --noconfirm
+        # arm has several kernel choices and defaults to linux-aarch64, so --noconfirm is required
         chroot $os_dir pacman -Syu --noconfirm linux
     }
 
     # shellcheck disable=SC2317
     local os_dir=/os
 
-    # 挂载分区
+    # Mount the partitions
     mount_part_basic_layout /os /os/efi
 
-    # 安装系统
+    # Install the system
     install_$distro
 
-    # 安装 arch 有 gpg-agent 进程驻留
+    # installing arch leaves a gpg-agent process running
     killall -q gpg-agent || true
 
-    # 初始化
+    # Initialize
     if false; then
-        # preset-all 后多了很多服务，内存占用多了几十M
+        # preset-all adds many services and increases memory use by tens of MB
         chroot $os_dir systemctl preset-all
     fi
 
-    # 网络配置
+    # Network configuration
     case "$network_app" in
     systemd-networkd)
         chroot $os_dir systemctl enable systemd-networkd
         chroot $os_dir systemctl enable systemd-resolved
 
         apk add cloud-init
-        # 第二次运行会报错
+        # a second run would error out
         useradd systemd-network || true
         create_cloud_init_network_config net.cfg
         cat -n net.cfg
-        # 正常应该是 -D gentoo，但 alpine 的 cloud-init 包缺少 gentoo 配置
+        # -D gentoo would be correct, but alpine's cloud-init package has no gentoo config
         cloud-init devel net-convert -p net.cfg -k yaml -d out -D alpine -O networkd
 
-        # 注意名字是 10-cloud-init-eth*.network，fix-eth-name.sh 会此文件名查找配置文件
+        # note the name is 10-cloud-init-eth*.network; fix-eth-name.sh looks the config file up by that name
         cp out/etc/systemd/network/10-cloud-init-eth*.network $os_dir/etc/systemd/network/
 
-        # 删除网卡名匹配
+        # remove the NIC name match
         sed -i '/^Name=/d' $os_dir/etc/systemd/network/10-cloud-init-eth*.network
 
-        # 删除 Generated by cloud-init. Changes will be lost.
-        # 并删除头部的空行
+        # remove "Generated by cloud-init. Changes will be lost."
+        # and remove the leading blank line
         sed -i '/^# Generated by cloud-init/d' $os_dir/etc/systemd/network/10-cloud-init-eth*.network
         del_head_empty_lines_inplace $os_dir/etc/systemd/network/10-cloud-init-eth*.network
 
-        # 清理
+        # Clean up
         rm -rf net.cfg out
         apk del cloud-init
 
-        # 显示网络配置
+        # Show the network configuration
         cat -n $os_dir/etc/systemd/network/10-cloud-init-eth*.network
         ;;
     network-manager)
         chroot $os_dir systemctl enable NetworkManager
 
-        # 可以直接用 alpine 的 cloud-init 生成 Network Manager 配置
+        # alpine's cloud-init can generate the Network Manager configuration directly
         create_cloud_init_network_config /net.cfg
         create_network_manager_config /net.cfg "$os_dir"
         rm /net.cfg
         ;;
     esac
 
-    # arch gentoo 网络配置是用 alpine cloud-init 生成的
-    # cloud-init 版本够新，因此无需修复 onlink 网关
+    # the arch network configuration is generated by the alpine cloud-init
+    # that cloud-init is new enough, so the onlink gateway needs no fixing
 
     basic_init $os_dir
 
-    # ntp 用 systemd 自带的
-    # TODO: vm agent + 随机数生成器
+    # use the ntp built into systemd
+    # TODO: vm agent + random number generator
 
     # grub
     if is_efi; then
-        # arch gentoo 推荐 efi 挂载在 /efi
+        # arch recommends mounting efi at /efi
         chroot $os_dir grub-install --efi-directory=/efi
         chroot $os_dir grub-install --efi-directory=/efi --removable
     else
         chroot $os_dir grub-install /dev/$xda
     fi
 
-    # cmdline + 生成 grub.cfg
+    # cmdline + generate grub.cfg
     if [ -d $os_dir/etc/default/grub.d ]; then
         file=$os_dir/etc/default/grub.d/tty.cfg
     else
@@ -1958,20 +1958,20 @@ EOF
     chroot $os_dir grub-mkconfig -o /boot/grub/grub.cfg
 
     # fstab
-    # fstab 可不写 efi 条目， systemd automount 会自动挂载
-    # fstab 头部有使用说明，因此用 >>
+    # the efi entry can be left out of fstab; systemd automount handles it
+    # fstab starts with usage notes, so append with >>
     local alpine_rootfs=$os_dir/alpine
     create_alpine_rootfs_with_arch_install_scripts "$alpine_rootfs" true "$os_dir"
-    # genfstab 会用到 findmnt 等工具
+    # genfstab needs findmnt and similar tools
     retry 5 chroot "$alpine_rootfs" apk add util-linux
     chroot "$alpine_rootfs" genfstab -U /parent | sed '/swap/d' >>$os_dir/etc/fstab
     umount -R "$alpine_rootfs/parent"
     remove_alpine_rootfs "$alpine_rootfs"
 
-    # 删除 resolv.conf，不然 systemd-resolved 无法创建软链接
+    # remove resolv.conf, otherwise systemd-resolved cannot create the symlink
     rm_resolv_conf $os_dir
 
-    # 删除 swap
+    # remove swap
     swapoff -a
     rm -rf $os_dir/swapfile
 }
@@ -1979,7 +1979,7 @@ EOF
 get_http_file_size() {
     url=$1
 
-    # 网址重定向可能得到多个 Content-Length, 选最后一个
+    # a url redirect may yield several Content-Length headers; take the last
     wget --spider -S "$url" 2>&1 | grep 'Content-Length:' |
         tail -1 | awk '{print $2}' | grep .
 }
@@ -1995,23 +1995,23 @@ aria2c() {
         apk add aria2
     fi
 
-    # stdbuf 在 coreutils 包里面
+    # stdbuf is in the coreutils package
     if ! is_have_cmd stdbuf; then
         apk add coreutils
     fi
 
-    # 显示 url
+    # show the url
     show_url_in_args "$@" >&2
 
-    # 下载 tracker
-    # 在 sub shell 里面无法保存变量，因此写入到文件
+    # Download the tracker list
+    # variables cannot be saved from a subshell, so write to a file
     if echo "$@" | grep -Eq 'magnet:|\.torrent' && ! [ -f "/tmp/trackers" ]; then
-        # 独自一行下载，不然下载失败不会报错
-        # 里面有空行
+        # download on its own line, otherwise a failure would not be reported
+        # it contains blank lines
         # txt=$(wget -O- https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt | grep .)
         # txt=$(wget -O- https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt | grep .)
         txt=$(wget -O- https://cf.trackerslist.com/best.txt | grep .)
-        # sed 删除最后一个逗号
+        # sed removes the trailing comma
         echo "$txt" | newline_to_comma | sed 's/,$//' >/tmp/trackers
     fi
 
@@ -2036,7 +2036,7 @@ download_torrent_by_magnet() {
 
     mkdir -p /tmp/bt/$url_hash
 
-    # 不支持 -o bt.torrent 指定文件名
+    # -o bt.torrent cannot be used to set the filename
     aria2c "$url" \
         --bt-metadata-only=true \
         --bt-save-metadata=true \
@@ -2056,7 +2056,7 @@ get_bt_file_size() {
     torrent="$(get_torrent_path_by_magnet $url)"
     download_torrent_by_magnet "$url" "$torrent" >&2
 
-    # 列出第一个文件的大小
+    # list the size of the first file
     # idx|path/length
     # ===+===========================================================================
     #   1|./zh-cn_windows_11_consumer_editions_version_24h2_updated_jan_2025_x64_dvd_7a8e5a29.iso
@@ -2075,7 +2075,7 @@ get_link_file_size() {
 }
 
 pipe_extract() {
-    # alpine busybox 自带 gzip，但官方版也许性能更好
+    # alpine busybox ships gzip, but the official build may perform better
     case "$img_type_warp" in
     xz | gzip | zstd)
         apk add $img_type_warp
@@ -2098,17 +2098,17 @@ pipe_extract() {
 dd_raw_with_extract() {
     info "dd raw"
 
-    # 用官方 wget，一来带进度条，二来自带重试功能
+    # use the real wget: it shows a progress bar and has retry support
     apk add wget
 
     if ! wget $img -O- | pipe_extract >/dev/$xda 2>/tmp/dd_stderr; then
-        # vhd 文件结尾有 512 字节额外信息，可以忽略
+        # a vhd file has 512 bytes of trailing metadata that can be ignored
         if grep -iq 'No space' /tmp/dd_stderr; then
             apk add parted
             disk_size=$(get_disk_size /dev/$xda)
             disk_end=$((disk_size - 1))
 
-            # 如果报错，那大概是因为镜像比硬盘大
+            # an error here probably means the image is larger than the disk
             if last_part_end=$(parted -sf /dev/$xda 'unit b print' ---pretend-input-tty |
                 del_empty_lines | tail -1 | awk '{print $3}' | sed 's/B//' | grep .); then
 
@@ -2165,16 +2165,16 @@ xda() {
 }
 
 create_part() {
-    # 除了 dd 都会用到
+    # used by everything except dd
     info "Create Part"
 
-    # 分区工具
+    # Partition tools
     apk add parted e2fsprogs
     if is_efi; then
         apk add dosfstools
     fi
 
-    # 清除分区表
+    # Wipe the partition table
     # https://github.com/bin456789/reinstall/issues/638
     apk add wipefs
     wipefs -a -f /dev/$xda
@@ -2183,21 +2183,21 @@ create_part() {
     # shellcheck disable=SC2154
     if [ "$distro" = windows ]; then
         if ! size_bytes=$(get_link_file_size "$iso"); then
-            # 默认值，目前最大的 iso 小于 8g
+            # default value; the largest iso today is under 8g
             size_bytes=$((8 * 1024 * 1024 * 1024))
         fi
 
-        # 按iso容量计算分区大小
-        # 200m 用于驱动/文件系统自身占用 + pagefile
-        # 理论上 installer 分区可以删除 boot.wim，这样就不用额外添加 200m，但是
-        # 1. vista/2008 不能删除 boot.wim
-        # 2. 下载镜像前不知道是 vista/2008，因为 --image-name 可以随便输入
-        # 因此还是要额外添加 200m
-        # 注意这里单位要用 MiB，因为后面的 border 要以 MiB 计算
+        # size the partition from the iso size
+        # 200m covers the driver/filesystem overhead plus the pagefile
+        # in theory boot.wim could be deleted from the installer partition, removing the need for the extra 200m, but
+        # 1. vista/2008 cannot delete boot.wim
+        # 2. we do not know it is vista/2008 before downloading the image, since --image-name is free-form
+        # so the extra 200m is added regardless
+        # note the unit must be MiB here, because border is calculated in MiB below
         part_size="$((size_bytes / 1024 / 1024 + 200))MiB"
 
         apk add ntfs-3g-progs
-        # 虽然ntfs3不需要fuse，但wimmount需要，所以还是要保留
+        # ntfs3 does not need fuse, but wimmount does, so keep it
         modprobe fuse ntfs3
         if is_efi; then
             # efi
@@ -2217,7 +2217,7 @@ create_part() {
             mkfs.ntfs -f -F -L os "/dev/$(xda 3)"             #3 os
             mkfs.ntfs -f -F -L installer "/dev/$(xda 4)"      #4 installer
         else
-            # bios + mbr 启动盘最大可用 2t
+            # a bios + mbr boot disk can use at most 2t
             if is_xda_gt_2t; then
                 border=$((2 * 1024 * 1024 - ${part_size%MiB}))MiB
                 max_usable_size=2TiB
@@ -2237,12 +2237,12 @@ create_part() {
         fi
     elif is_use_cloud_image; then
         installer_part_size="$(get_cloud_image_part_size)"
-        # 这几个系统不使用dd，而是复制文件
+        # these systems copy files rather than using dd
         if [ "$distro" = centos ] || [ "$distro" = almalinux ] || [ "$distro" = rocky ] ||
             [ "$distro" = oracle ] || [ "$distro" = redhat ] ||
             [ "$distro" = anolis ] || [ "$distro" = opencloudos ] || [ "$distro" = openeuler ] ||
             [ "$distro" = ubuntu ]; then
-            # 这里的 fs 没有用，最终使用目标系统的格式化工具
+            # the fs here is unused; the target system\'s own tool does the formatting
             fs=ext4
             if is_efi; then
                 parted /dev/$xda -s -- \
@@ -2254,7 +2254,7 @@ create_part() {
                 update_part
 
                 mkfs.fat -n efi "/dev/$(xda 1)"           #1 efi
-                echo                                      #2 os 用目标系统的格式化工具
+                echo                                      #2 os uses the target system's own formatting tool
                 mkfs.ext4 -F -L installer "/dev/$(xda 3)" #3 installer
             else
                 parted /dev/$xda -s -- \
@@ -2266,11 +2266,11 @@ create_part() {
                 update_part
 
                 echo                                      #1 bios_boot
-                echo                                      #2 os 用目标系统的格式化工具
+                echo                                      #2 os uses the target system's own formatting tool
                 mkfs.ext4 -F -L installer "/dev/$(xda 3)" #3 installer
             fi
         else
-            # 使用 dd qcow2
+            # use dd with qcow2
             # fedora debian opensuse arch gentoo
             parted /dev/$xda -s -- \
                 mklabel gpt \
@@ -2282,9 +2282,9 @@ create_part() {
             mkfs.ext4 -F -L installer "/dev/$(xda 2)" #2 installer
         fi
     elif [ "$distro" = alpine ] || [ "$distro" = arch ]; then
-        # alpine 本身关闭了 64bit ext4
+        # alpine itself disables 64bit ext4
         # https://gitlab.alpinelinux.org/alpine/alpine-conf/-/blob/3.18.1/setup-disk.in?ref_type=tags#L908
-        # 而且 alpine 的 extlinux 不兼容 64bit ext4
+        # and alpine's extlinux is incompatible with 64bit ext4
         [ "$distro" = alpine ] && ext4_opts="-O ^64bit" || ext4_opts=
         if is_efi; then
             # efi
@@ -2319,13 +2319,13 @@ create_part() {
             mkfs.ext4 -F $ext4_opts "/dev/$(xda 1)" #1 os
         fi
     else
-        # 安装红帽系或ubuntu
-        # 对于红帽系是临时分区表，安装时除了 installer 分区，其他分区会重建为默认的大小
-        # 对于ubuntu是最终分区表，因为 ubuntu 的安装器不能调整个别分区，只能重建整个分区表
-        # installer 2g分区用fat格式刚好塞得下ubuntu-22.04.3 iso，而ext4塞不下或者需要改参数
+        # install a red hat derivative or ubuntu
+        # for red hat this is a temporary partition table: at install time every partition except installer is recreated at its default size
+        # for ubuntu it is the final table, because the ubuntu installer cannot resize individual partitions, only rebuild the whole table
+        # a 2g installer partition formatted fat just fits the ubuntu-22.04.3 iso, whereas ext4 does not without tuning
         if [ "$distro" = ubuntu ]; then
             if ! size_bytes=$(get_http_file_size "$iso"); then
-                # 默认值，假设 iso 3g
+                # default value, assuming a 3g iso
                 size_bytes=$((3 * 1024 * 1024 * 1024))
             fi
             installer_part_size="$(get_part_size_mb_for_file_size_b $size_bytes)MiB"
@@ -2334,8 +2334,8 @@ create_part() {
             installer_part_size=2GiB
         fi
 
-        # centos 7 无法加载alpine格式化的ext4
-        # 要关闭这个属性
+        # centos 7 cannot mount an ext4 formatted by alpine,
+        # so this feature must be disabled
         ext4_opts="-O ^metadata_csum"
         apk add dosfstools
 
@@ -2382,8 +2382,8 @@ create_part() {
 
     update_part
 
-    # alpine 删除分区工具，防止 256M 小机爆内存
-    # setup-disk /dev/sda 会保留格式化工具，我们也保留
+    # alpine removes the partition tools to stop a 256M machine running out of memory
+    # setup-disk /dev/sda keeps the formatting tools, so keep them too
     if [ "$distro" = alpine ]; then
         apk del parted
     fi
@@ -2425,7 +2425,7 @@ create_cloud_init_network_config() {
 
     info "Create Cloud-init network config"
 
-    # 防止文件未创建
+    # guard against the file not being created
     mkdir -p "$(dirname "$ci_file")"
     touch "$ci_file"
 
@@ -2461,9 +2461,9 @@ create_cloud_init_network_config() {
                     \"gateway\": \"$ipv4_gateway\" }
                     " $ci_file
 
-            # 旧版 cloud-init 有 bug
-            # 有的版本会只从第一种配置中读取 dns，有的从第二种读取
-            # 因此写两种配置
+            # older cloud-init versions have a bug:
+            # some read dns only from the first form of the config, others from the second,
+            # so write both
             # https://github.com/canonical/cloud-init/commit/1b8030e0c7fd6fbff7e38ad1e3e6266ae50c83a5
             for cur in $(get_current_dns 4); do
                 yq -i ".network.config[$config_id].subnets[$subnet_id].dns_nameservers += [\"$cur\"]" $ci_file
@@ -2511,12 +2511,12 @@ create_cloud_init_network_config() {
                     \"gateway\": \"$ipv6_gateway\" }
                     " $ci_file
         fi
-        # 无法设置 autoconf = false ?
+        # autoconf = false cannot be set?
         if should_disable_accept_ra; then
             yq -i ".network.config[$config_id].accept-ra = false" $ci_file
         fi
 
-        # 有 ipv6 但需设置 dns 的情况
+        # the case where ipv6 exists but dns still needs setting
         if is_need_manual_set_dnsv6; then
             need_set_dns6=true
             for cur in $(get_current_dns 6); do
@@ -2539,31 +2539,31 @@ create_cloud_init_network_config() {
                 yq -i ".network.config[$config_id].address += [\"$cur\"]" $ci_file
             done
         fi
-        # 如果 network.config[$config_id] 没有 address，则删除，避免低版本 cloud-init 报错
+        # if network.config[$config_id] has no address, remove it so older cloud-init does not error
         yq -i "del(.network.config[$config_id] | select(has(\"address\") | not))" $ci_file
     fi
 
     apk del yq-go
 
-    # 查看文件
+    # Show the file
     info "Cloud-init network config"
     cat -n $ci_file >&2
 }
 
-# 实测没用，生成的 machine-id 是固定的
-# 而且 lightsail centos 9 模板 machine-id 也是相同的，显然相同 id 不是个问题
+# Proved useless in practice: the generated machine-id is always the same
+# and the lightsail centos 9 template has an identical machine-id too, so a shared id is clearly not a problem
 clear_machine_id() {
     local os_dir=$1
 
     # https://www.freedesktop.org/software/systemd/man/latest/machine-id.html
-    # gentoo 不会自动创建该文件
+    # gentoo does not create this file automatically
     echo uninitialized >$os_dir/etc/machine-id
 
     # https://build.opensuse.org/projects/Virtualization:Appliances:Images:openSUSE-Leap-15.5/packages/kiwi-templates-Minimal/files/config.sh?expand=1
     rm -f $os_dir/var/lib/systemd/random-seed
 }
 
-# 注意 anolis 7 有这个文件，可能干扰我们的配置?
+# note that anolis 7 has this file, which may interfere with our configuration?
 # /etc/cloud/cloud.cfg.d/aliyun_cloud.cfg -> /sys/firmware/qemu_fw_cfg/by_name/etc/cloud-init/vendor-data/raw
 download_cloud_init_config() {
     local os_dir=$1
@@ -2572,15 +2572,15 @@ download_cloud_init_config() {
 
     ci_file=$os_dir/etc/cloud/cloud.cfg.d/99_fallback.cfg
     download $confhome/deprecated/cloud-init.yaml $ci_file
-    # 删除注释行，除了第一行
+    # remove the comment lines except the first
     sed -i '1!{/^[[:space:]]*#/d}' $ci_file
 
-    # 修改密码
-    # 不能用 sed 替换，因为含有特殊字符
+    # Change the password
+    # sed cannot be used to substitute it, because it contains special characters
     content=$(cat $ci_file)
     echo "${content//@PASSWORD@/$(get_password_linux_sha512)}" >$ci_file
 
-    # 修改 ssh 端口
+    # Change the ssh port
     if is_need_change_ssh_port; then
         sed -i "s/@SSH_PORT@/$ssh_port/g" $ci_file
     else
